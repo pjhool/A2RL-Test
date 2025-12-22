@@ -3,6 +3,7 @@
 from __future__ import absolute_import
 
 import logging
+import config
 from logger_config import setup_logger
 
 from skimage.color import rgb2gray
@@ -62,13 +63,8 @@ env_name = "BreakoutDeterministic-v4"
 
 drop_ratio = 0.5
 
-# Valid image extensions and validation parameters
-VALID_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
-MIN_FILE_SIZE = 1024  # 1 KB
-MIN_IMAGE_DIMENSION = 50  # minimum width/height in pixels
-
 # Initialize logger
-logger = setup_logger('A2RL', log_dir='../logs', level=logging.DEBUG, console_level=logging.INFO)
+logger = setup_logger('A2RL', log_dir=config.LOG_DIR, level=logging.DEBUG, console_level=logging.INFO)
 
 # This is the definition of helper function
 def load_and_validate_image(filepath):
@@ -85,13 +81,13 @@ def load_and_validate_image(filepath):
     try:
         # Check file extension
         _, ext = os.path.splitext(filepath.lower())
-        if ext not in VALID_IMAGE_EXTENSIONS:
+        if ext not in config.VALID_IMAGE_EXTENSIONS:
             return None, "Invalid extension: {}".format(ext)
         
         # Check file size
         try:
             file_size = getsize(filepath)
-            if file_size < MIN_FILE_SIZE:
+            if file_size < config.MIN_FILE_SIZE:
                 return None, "File too small ({} bytes)".format(file_size)
         except Exception as e:
             return None, "Cannot get file size: {}".format(e)
@@ -107,7 +103,7 @@ def load_and_validate_image(filepath):
         img_rgb = img[:, :, :3]
         
         # Check minimum dimensions
-        if img_rgb.shape[0] < MIN_IMAGE_DIMENSION or img_rgb.shape[1] < MIN_IMAGE_DIMENSION:
+        if img_rgb.shape[0] < config.MIN_IMAGE_DIMENSION or img_rgb.shape[1] < config.MIN_IMAGE_DIMENSION:
             return None, "Image too small: {}x{}".format(img_rgb.shape[0], img_rgb.shape[1])
         
         return img_rgb, None
@@ -116,7 +112,7 @@ def load_and_validate_image(filepath):
         return None, "Error loading image: {}".format(str(e))
 
 
-def validate_aspect_ratio(bbox, min_ratio=0.5, max_ratio=2.0):
+def validate_aspect_ratio(bbox, min_ratio=config.MIN_ASPECT_RATIO, max_ratio=config.MAX_ASPECT_RATIO):
     """
     Validate aspect ratio of bounding box.
     
@@ -133,13 +129,13 @@ def validate_aspect_ratio(bbox, min_ratio=0.5, max_ratio=2.0):
     
     # Prevent division by zero
     if y_height < 1e-6:
-        return False, 0.0, 5.0
+        return False, 0.0, config.ASPECT_RATIO_PENALTY
     
     aspect_ratio = x_width / y_height
     
     # Check if aspect ratio is within acceptable range
     if aspect_ratio < min_ratio or aspect_ratio > max_ratio:
-        return False, aspect_ratio, 5.0
+        return False, aspect_ratio, config.ASPECT_RATIO_PENALTY
     
     return True, aspect_ratio, 0.0
 
@@ -180,16 +176,16 @@ class A3CAgent:
     def __init__(self, action_size):
         global a3c_graph
         # 상태크기와 행동크기를 갖고옴
-        self.state_size = (1, 2000)
+        self.state_size = config.STATE_SIZE
         self.action_size = action_size
         # A3C 하이퍼파라미터
-        self.discount_factor = 0.99
+        self.discount_factor = config.DISCOUNT_FACTOR
         self.no_op_steps = 30
-        self.actor_lr = 2.5e-4
-        self.critic_lr = 2.5e-4
-        self.beta = 0.05
+        self.actor_lr = config.ACTOR_LR
+        self.critic_lr = config.CRITIC_LR
+        self.beta = config.BETA
         # 쓰레드의 갯수
-        self.threads = 1
+        self.threads = config.THREADS
         #self.threads = 8
 
 
@@ -213,7 +209,7 @@ class A3CAgent:
         self.summary_placeholders, self.update_ops, self.summary_op = \
             self.setup_summary()
         self.summary_writer = \
-            tf.summary.FileWriter('../summary/A2RL_a3c', self.sess.graph)
+            tf.summary.FileWriter(config.SUMMARY_DIR, self.sess.graph)
         #tf.summary.FileWriter(logdir, self.sess.graph)
 
 
@@ -242,7 +238,7 @@ class A3CAgent:
             #now = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             now = datetime.now().strftime("%Y%m%d%H%M%S")
             logger.info('Model save timestamp: %s', now)
-            root_logdir = "../save_model"
+            root_logdir = config.SAVE_MODEL_DIR  # save_model/A2RL_a3c
             logdir = "{}/A2RL_a3c_run-{}".format(root_logdir, now)
             logger.info('Saving model to: %s', logdir)
 
@@ -385,17 +381,17 @@ class Agent(threading.Thread):
         self.avg_loss = 0
 
         # 모델 업데이트 주기
-        self.t_max = 10
+        self.t_max = config.UPDATE_FREQ
 
         self.t = 0
 
-        self.T_max = 50
+        self.T_max = config.T_MAX
 
-        self.step_penalty = 0.001
+        self.step_penalty = config.STEP_PENALTY
 
-        self.epoch_size   = 100000   # 20
-        self.train_size = 9000
-        self. batch_size = 32    #32
+        self.epoch_size   = config.EPOCH_SIZE   # 20
+        self.train_size = config.TRAIN_SIZE
+        self. batch_size = config.BATCH_SIZE    #32
 
         # Error tracking
         self.failed_images = []
@@ -680,11 +676,11 @@ class Agent(threading.Thread):
             #TrainPath = '../AVA/Train'
             #self.train_( TrainPath )
             logger.info('Epoch step: %d', epoch_step)
-            TrainPath = '../AVA/Train8954'
+            TrainPath = config.TRAIN_PATH
             
             # Use new unified function with sequential sampling
-            # num_batches = 281 processes approximately 9000 images (281 * 32)
-            self.train_episode(TrainPath, num_batches=281, verbose=True, use_random_sampling=False)
+            # num_batches processes approximately 9000 images (281 * 32)
+            self.train_episode(TrainPath, num_batches=config.NUM_BATCHES, verbose=True, use_random_sampling=False)
 
         #sys.exit(0)
 
@@ -827,16 +823,16 @@ if __name__ == "__main__":
     batch_size = 1
 
     # TODO: Change this if your model file is located somewhere else
-    snapshot = '../a2rl_model/model-spp-max'
+    snapshot = config.MODEL_SNAPSHOT
 
     tf.reset_default_graph()
-    embedding_dim = 1000
-    ranking_loss = 'svm'
-    net_data = np.load('alexnet.npy', encoding='bytes').item()
+    embedding_dim = config.EMBEDDING_DIM
+    ranking_loss = config.RANKING_LOSS
+    net_data = np.load(config.ALEXNET_NPY, encoding='bytes').item()
     image_placeholder = tf.placeholder(dtype=global_dtype, shape=[batch_size, 227, 227, 3])
     var_dict = nw.get_variable_dict(net_data)
-    SPP = True
-    pooling = 'max'
+    SPP = config.SPP
+    pooling = config.POOLING
     with tf.variable_scope("ranker") as scope:
         feature_vec = nw.build_alexconvnet(image_placeholder, var_dict, embedding_dim, SPP=SPP, pooling=pooling)
         score_func = nw.score(feature_vec)
@@ -849,7 +845,7 @@ if __name__ == "__main__":
 
 
 
-    global_agent = A3CAgent(action_size=14)
+    global_agent = A3CAgent(action_size=config.ACTION_SIZE)
     global_agent.train()
 
 
