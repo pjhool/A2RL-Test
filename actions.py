@@ -78,6 +78,21 @@ def generate_bbox(input_np, ratios):
         xmax = int(float(ratio[2]) / 20 * width)
         ymax = int(float(ratio[3]) / 20 * height)
         
+        # Ensure coordinates are within image bounds
+        xmin = max(0, min(xmin, width - 1))
+        ymin = max(0, min(ymin, height - 1))
+        xmax = max(0, min(xmax, width))
+        ymax = max(0, min(ymax, height))
+        
+        # Ensure minimum width and height (at least 5 pixels)
+        if xmax - xmin < 5:
+            xmax = min(xmin + 5, width)
+            xmin = max(0, xmax - 5)
+        
+        if ymax - ymin < 5:
+            ymax = min(ymin + 5, height)
+            ymin = max(0, ymax - 5)
+        
         bbox.append((xmin, ymin, xmax, ymax))
     #print( ' generate bbox ==', bbox)
     return bbox
@@ -93,7 +108,29 @@ def crop_input(input_np, bbox):
         #fileName = 'cropBox/' + my_static + '.jpg'
         #print(fileName)
         #io.imsave( fileName, im[ymin:ymax, xmin:xmax])  for im, (xmin, ymin, xmax, ymax) in zip(input_np, bbox)
-        result = [transform.resize(im[ymin:ymax, xmin:xmax], (227, 227), mode='constant')
-                        for im, (xmin, ymin, xmax, ymax) in zip(input_np, bbox)]
+        
+        result = []
+        for im, (xmin, ymin, xmax, ymax) in zip(input_np, bbox):
+            # Validate bounding box dimensions
+            crop_width = xmax - xmin
+            crop_height = ymax - ymin
+            
+            if crop_width <= 0 or crop_height <= 0:
+                print("WARNING: Invalid crop dimensions ({}x{}), using full image".format(
+                    crop_width, crop_height))
+                # Use full image as fallback
+                cropped = im
+            else:
+                # Crop the image
+                cropped = im[ymin:ymax, xmin:xmax]
+                
+                # Additional check after cropping
+                if cropped.shape[0] == 0 or cropped.shape[1] == 0:
+                    print("WARNING: Empty crop result, using full image")
+                    cropped = im
+            
+            # Resize to target size
+            resized = transform.resize(cropped, (227, 227), mode='constant')
+            result.append(resized)
     
         return np.asarray(result, dtype=np.float32)
