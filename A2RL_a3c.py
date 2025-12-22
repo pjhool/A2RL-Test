@@ -395,6 +395,9 @@ class Agent(threading.Thread):
         self.failed_images = []
         self.total_images_processed = 0
         self.total_images_failed = 0
+        
+        # Batch index for sequential sampling
+        self.current_batch_index = 0
 
         # VFN Preload
 
@@ -407,32 +410,52 @@ class Agent(threading.Thread):
 
     #  This is the      definition      of      helper      function
 
-    def train_ (self  , TrainPath ):
-
-        global episode
-        global global_dtype
-        global a3c_graph
-
+    def _load_and_validate_batch(self, TrainPath, batch_size, use_random_sampling=False):
+        """
+        Load and validate a batch of images.
+        
+        Args:
+            TrainPath: Path to training images folder
+            batch_size: Number of images to load
+            use_random_sampling: If True, use random sampling. If False, use sequential sampling.
+        
+        Returns:
+            tuple: (images, images_filename) - lists of loaded images and their filenames
+        """
         trainfiles = [f for f in listdir(TrainPath) if isfile(join(TrainPath, f))]
-
-        # print(TrainPath)
-        # print(trainfiles)
-
-        rand_index = np.random.choice(len(trainfiles), size=self.batch_size)
-        print('rand_index = ', rand_index)
-
-        trainfiles_batch = [trainfiles[index] for index in rand_index]
-
-        #trainfiles_batch = ['12775.jpg' , '338809.jpg', '33018.jpg' , '2233.jpg']
-        trainfiles_batch_fullname =  [ join( TrainPath, x )   for x in trainfiles_batch     ]
-
-        print( 'trainfiles_batch = ' ,  trainfiles_batch_fullname)
-        #print ( ' jo in path  ='  , join(TrainPath, '337580.jpg')  )
-        # add the following codes in the main function
+        total_files = len(trainfiles)
+        
+        if use_random_sampling:
+            # Random sampling
+            rand_index = np.random.choice(total_files, size=batch_size, replace=False)
+            print('Random sampling - indices: ', rand_index)
+            trainfiles_batch = [trainfiles[index] for index in rand_index]
+        else:
+            # Sequential sampling
+            start_idx = self.current_batch_index * batch_size
+            end_idx = min(start_idx + batch_size, total_files)
+            
+            # Wrap around if we reach the end
+            if start_idx >= total_files:
+                self.current_batch_index = 0
+                start_idx = 0
+                end_idx = min(batch_size, total_files)
+            
+            print('Sequential sampling - batch {}: indices [{}, {})'.format(
+                self.current_batch_index, start_idx, end_idx))
+            
+            trainfiles_batch = trainfiles[start_idx:end_idx]
+            self.current_batch_index += 1
+        
+        trainfiles_batch_fullname = [join(TrainPath, x) for x in trainfiles_batch]
+        
+        print('trainfiles_batch = ', trainfiles_batch_fullname)
+        
+        # Load and validate images
         images = []
         images_filename = []
         
-        for x in trainfiles_batch_fullname:   # remember to replace with the filename of your test image
+        for x in trainfiles_batch_fullname:
             img, error = load_and_validate_image(x)
             
             if error:
@@ -444,383 +467,201 @@ class Agent(threading.Thread):
             images.append(img)
             images_filename.append(x)
             self.total_images_processed += 1
-            # io.imread('test1.jpg')[:, :, :3]  # remember to replace with the filename of your test image
+        
+        print('Loaded {} valid images'.format(len(images)))
+        return images, images_filename
 
-
-        #print(images )
-
-        #sys.exit(0)
-        print(len(images))
-
-        #sys.exit(0)
-
-        for j in range(len(images)):
-
-            step = 0
-            self.t = 0
-
-            scores, features = evaluate_aesthetics_score([images[j]])
-            print('Poorly Cropped Image vs Well Cropped Image')
-            print(scores)
-            # print(features )
-
-            print(' feature shape ', features[0].shape)
-
-            batch_size = 1
-            terminals = np.zeros(batch_size)
-            ratios = np.repeat([[0, 0, 20, 20]], batch_size, axis=0)
-
-            if self.t == 0:
-                global_score = scores[0]
-                global_feature = features[0]
-
-            # print(' global feature shape = ', global_feature )
-            print(' global score = ', global_score)
-
-            #parser = argparse.ArgumentParser(description='A2RL: Auto Image Cropping')
-            #parser.add_argument('--image_path', required=True, help='Path for the image to be cropped')
-            #parser.add_argument('--save_path', required=True, help='Path for saving cropped image')
-            #args = parser.parse_args()
-
-            score = 0
-            done = False
-            # while episode < EPISODES:
-            while step < self.T_max and not done:  # T_max = 50
-
-                if self.t == 0:
-                    local_feature = global_feature
-                    local_score = global_score
-                else:
-                    local_feature = new_features[0]
-                    local_score = new_scores[0]
-
-                observe = np.concatenate((global_feature, local_feature), axis=1)
-                print(' observe shape  = ', observe.shape)
-
-                history = np.expand_dims(observe, axis=0)
-
-                print(' history shape  = ', history.shape)
-                print(' history   = ', history)
-                # print ( ' history = '  , history[ history > 0])
-
-                #if self.t < 3 :  # 5번까지  action은 무조건 Vaild action으로 취급하자
-                    #action, policy = self.get_action_pretest(history)
-                #else :
-                    #action, policy = self.get_action_test(history)
-                    #action, policy = self.get_action(history)
-
-                action, policy = self.get_action(history)
-
-
-                print('action = ', action)
-                print('policy = ', policy)
-
-
-                if action == 13 and  step > 1 :
-                    done = True
-                    print(' done is True ')
-                else  :
-                    print (' terminals = ' , terminals )
-                    terminals[0] = 0 
-
-
-                #sys.exit(0)
-
-                    # 선택한 행동으로 한 바운딩 박스 생성
-
-                ratios, terminals = command2action([action], ratios, terminals)
-
-                print(' ratios =', ratios)
-
-                im = images[j].astype(np.float32) / 255 - 0.5
-                bbox = generate_bbox([im], ratios)
-
-                #print ( 'bbox == ' , bbox )
-
-
-                # New Cropped Image 생성 && Resize to ( 227, 227 )
-                img = crop_input([im], bbox)
-
-                # Score , Feature of newly Cropped image
-                new_scores, new_features = evaluate_aesthetics_score_resized(img)
-
-                print(' new_scores = ', new_scores)
-                # print ( ' new_features = ' , new_features )
-                # Reward 계산
-                reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
-
-                # Check Aspect Ratio with validation
-                is_valid, asratio, penalty = validate_aspect_ratio(bbox)
-                
-                if not is_valid:
-                    print('Invalid aspect ratio: {:.2f} (penalty: {})'.format(asratio, penalty))
-                    reward = reward - penalty
-                else:
-                    print('Valid aspect ratio: {:.2f}'.format(asratio))
-                    
-                print('reward = ', reward)
-
-                # sys.exit(0)
-
-                # 각 타임스텝마다 Cropped 이미지 생성
-
-                # print( 'bbox = ' , bbox)
-                # 정책의 최대값
-                self.avg_p_max += np.amax(self.actor.predict(
-                    np.float32(history)))
-
-                score += reward
-
-                # 샘플을 저장
-                self.append_sample(history, action, reward)
-                print(' {}  ### reward  222 = {} '.format(self.t, reward))
-
-                #if self.t == 1000:
-                    #sys.exit(0)
-
-                step += 1
-                self.t += 1
-
-                if  step == self.T_max :
-                   done = True
-
-                # 에피소드가 끝나거나 최대 타임스텝 수에 도달하면 학습을 진행
-                if self.t % self.t_max or done:
-                    self.train_model(done)
-                    self.update_local_model()
-
-                
-                if done :
-                    # 각 에피소드 당 학습 정보를 기록
-                    episode += 1
-                    print("episode:", episode, "  score:", score, "  step:",
-                          step)
-
-                    stats = [score, self.avg_p_max / float(step),
-                             step]
-                    for i in range(len(stats)):
-                        self.sess.run(self.update_ops[i], feed_dict={
-                            self.summary_placeholders[i]: float(stats[i])
-                        })
-                    summary_str = self.sess.run(self.summary_op)
-                    self.summary_writer.add_summary(summary_str, episode + 1)
-                    self.avg_p_max = 0
-                    self.avg_loss = 0
-                    step = 0
-
-    def train9000_(self, TrainPath ):
-
+    def _process_single_image(self, image, filename=None):
+        """
+        Process a single image through the training loop.
+        
+        Args:
+            image: Image array to process
+            filename: Optional filename for logging
+        """
         global episode
-        global global_dtype
-        global a3c_graph
-
-        trainfiles = [f for f in listdir(TrainPath) if isfile(join(TrainPath, f))]
-
-        # print(TrainPath)
-        print( len (trainfiles ) )
-
-
-        episode_step = int(9000/32)
-
-
-        for i_step  in range( episode_step  ) :
-
-            rand_index = np.random.choice(len(trainfiles), size=self.batch_size)
-            print('rand_index = ', rand_index)
-
-            trainfiles_batch = [trainfiles[index] for index in rand_index]
-            #print ( range( int ( i_step*32)   , int ( (i_step+1)* 32 )  ))
-            #trainfiles_batch = [trainfiles[index] for index in range( int ( i_step*32)   , int ( (i_step+1)* 32 )  )]
-
-            # trainfiles_batch = ['12775.jpg' , '338809.jpg', '33018.jpg' , '2233.jpg']
-            trainfiles_batch_fullname = [join(TrainPath, x) for x in trainfiles_batch]
-
-            print('trainfiles_batch = ', trainfiles_batch_fullname)
-
-            # print ( ' jo in path  ='  , join(TrainPath, '337580.jpg')  )
-            # add the following codes in the main function
-            images = []
-            images_filename = []
+        
+        step = 0
+        self.t = 0
+        
+        scores, features = evaluate_aesthetics_score([image])
+        if filename:
+            print('Poorly Cropped Image vs Well Cropped Image', filename)
+        else:
+            print('Poorly Cropped Image vs Well Cropped Image')
+        print(scores)
+        
+        print(' feature shape ', features[0].shape)
+        
+        batch_size = 1
+        terminals = np.zeros(batch_size)
+        ratios = np.repeat([[0, 0, 20, 20]], batch_size, axis=0)
+        
+        if self.t == 0:
+            global_score = scores[0]
+            global_feature = features[0]
+        
+        print(' global score = ', global_score)
+        
+        score = 0
+        done = False
+        
+        while step < self.T_max and not done:  # T_max = 50
             
-            for x in trainfiles_batch_fullname:  # remember to replace with the filename of your test image
-                img, error = load_and_validate_image(x)
+            if self.t == 0:
+                local_feature = global_feature
+                local_score = global_score
+            else:
+                local_feature = new_features[0]
+                local_score = new_scores[0]
+            
+            observe = np.concatenate((global_feature, local_feature), axis=1)
+            print(' observe shape  = ', observe.shape)
+            
+            history = np.expand_dims(observe, axis=0)
+            
+            print(' history shape  = ', history.shape)
+            print(' history   = ', history)
+            
+            action, policy = self.get_action(history)
+            
+            print('action = ', action)
+            print('policy = ', policy)
+            
+            if action == 13 and step > 1:
+                done = True
+                print(' done is True ')
+            else:
+                print(' terminals = ', terminals)
+                terminals[0] = 0
+            
+            # Generate bounding box
+            ratios, terminals = command2action([action], ratios, terminals)
+            
+            print(' ratios =', ratios)
+            
+            im = image.astype(np.float32) / 255 - 0.5
+            bbox = generate_bbox([im], ratios)
+            
+            # New Cropped Image
+            img = crop_input([im], bbox)
+            
+            # Score, Feature of newly Cropped image
+            new_scores, new_features = evaluate_aesthetics_score_resized(img)
+            
+            print(' new_scores = ', new_scores)
+            
+            # Calculate reward
+            reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
+            
+            # Check Aspect Ratio with validation
+            is_valid, asratio, penalty = validate_aspect_ratio(bbox)
+            
+            if not is_valid:
+                print('Invalid aspect ratio: {:.2f} (penalty: {})'.format(asratio, penalty))
+                reward = reward - penalty
+            else:
+                print('Valid aspect ratio: {:.2f}'.format(asratio))
+            
+            print('reward = ', reward)
+            
+            # Policy maximum
+            self.avg_p_max += np.amax(self.actor.predict(np.float32(history)))
+            
+            score += reward
+            
+            # Save sample
+            self.append_sample(history, action, reward)
+            print(' {}  ### reward  222 = {} '.format(self.t, reward))
+            
+            step += 1
+            self.t += 1
+            
+            if step == self.T_max:
+                done = True
+            
+            # Train model
+            if self.t % self.t_max or done:
+                self.train_model(done)
+                self.update_local_model()
+            
+            if done:
+                # Record episode statistics
+                episode += 1
+                print("episode:", episode, "  score:", score, "  step:", step,
+                      "  avg_p_max:", self.avg_p_max,
+                      "  avg_p_max/step:", self.avg_p_max / float(step))
                 
-                if error:
-                    print('Skipping {}: {}'.format(x, error))
-                    self.failed_images.append({'filename': x, 'error': error})
-                    self.total_images_failed += 1
-                    continue
+                # Print error statistics periodically
+                if episode % 100 == 0:
+                    total_processed = self.total_images_processed + self.total_images_failed
+                    if total_processed > 0:
+                        success_rate = (self.total_images_processed / float(total_processed)) * 100
+                        print("\n" + "="*60)
+                        print("Image Processing Statistics (Episode {}):".format(episode))
+                        print("  Total processed: {}".format(self.total_images_processed))
+                        print("  Total failed: {}".format(self.total_images_failed))
+                        print("  Success rate: {:.2f}%".format(success_rate))
+                        print("="*60 + "\n")
                 
-                images.append(img)
-                images_filename.append(x)
-                self.total_images_processed += 1
-            # print(images )
-
-            # sys.exit(0)
-            print(len(images))
-
-            # sys.exit(0)
-
-            for j in range(len(images)):
-
+                stats = [score, self.avg_p_max / float(step), step]
+                for i in range(len(stats)):
+                    self.sess.run(self.update_ops[i], feed_dict={
+                        self.summary_placeholders[i]: float(stats[i])
+                    })
+                summary_str = self.sess.run(self.summary_op)
+                self.summary_writer.add_summary(summary_str, episode + 1)
+                self.avg_p_max = 0
+                self.avg_loss = 0
                 step = 0
-                self.t = 0
 
-                scores, features = evaluate_aesthetics_score([images[j]])
-                print('Poorly Cropped Image vs Well Cropped Image', images_filename[j])
-                print(scores)
-                # print(features )
+    def train_episode(self, TrainPath, num_batches=1, verbose=True, use_random_sampling=False):
+        """
+        Unified training function that replaces train_() and train9000_().
+        
+        Args:
+            TrainPath: Path to training images folder
+            num_batches: Number of batches to process
+                        - 1: equivalent to train_()
+                        - 281 (9000/32): equivalent to train9000_()
+            verbose: Whether to print filenames during processing
+            use_random_sampling: If True, use random sampling. If False, use sequential sampling.
+        """
+        global episode, global_dtype, a3c_graph
+        
+        for batch_idx in range(num_batches):
+            if num_batches > 1:
+                print('\n=== Batch {}/{} ==='.format(batch_idx + 1, num_batches))
+            
+            # Load and validate batch
+            images, images_filename = self._load_and_validate_batch(
+                TrainPath, self.batch_size, use_random_sampling)
+            
+            # Process each image
+            for j in range(len(images)):
+                filename = images_filename[j] if verbose else None
+                self._process_single_image(images[j], filename)
 
-                print(' feature shape ', features[0].shape)
+    #  This is the      definition      of      helper      function
 
-                batch_size = 1
-                terminals = np.zeros(batch_size)
-                ratios = np.repeat([[0, 0, 20, 20]], batch_size, axis=0)
+    # DEPRECATED: Use train_episode() instead
+    def train_ (self  , TrainPath ):
+        """
+        DEPRECATED: This function is kept for backward compatibility.
+        Please use train_episode(TrainPath, num_batches=1, verbose=False) instead.
+        """
+        print("WARNING: train_() is deprecated. Use train_episode() instead.")
+        return self.train_episode(TrainPath, num_batches=1, verbose=False)
 
-                if self.t == 0:
-                    global_score = scores[0]
-                    global_feature = features[0]
 
-                # print(' global feature shape = ', global_feature )
-                print(' global score = ', global_score)
-
-                #parser = argparse.ArgumentParser(description='A2RL: Auto Image Cropping')
-                #parser.add_argument('--image_path', required=True, help='Path for the image to be cropped')
-                #parser.add_argument('--save_path', required=True, help='Path for saving cropped image')
-                #args = parser.parse_args()
-
-                score = 0
-                done = False
-                # while episode < EPISODES:
-                while step < self.T_max and not done:  # T_max = 50
-
-                    if self.t == 0:
-                        local_feature = global_feature
-                        local_score = global_score
-                    else:
-                        local_feature = new_features[0]
-                        local_score = new_scores[0]
-
-                    observe = np.concatenate((global_feature, local_feature), axis=1)
-                    print(' observe shape  = ', observe.shape)
-
-                    history = np.expand_dims(observe, axis=0)
-
-                    print(' history shape  = ', history.shape)
-                    print(' history   = ', history)
-                    # print ( ' history = '  , history[ history > 0])
-
-                    # if self.t < 3 :  # 5번까지  action은 무조건 Vaild action으로 취급하자
-                    # action, policy = self.get_action_pretest(history)
-                    # else :
-                    # action, policy = self.get_action_test(history)
-                    # action, policy = self.get_action(history)
-
-                    action, policy = self.get_action(history)
-
-                    print('action = ', action)
-                    print('policy = ', policy)
-
-                    if action == 13 and step > 1:
-                        done = True
-                        print(' done is True ')
-                    else:
-                        print(' terminals = ', terminals)
-                        terminals[0] = 0
-
-                        # sys.exit(0)
-
-                        # 선택한 행동으로 한 바운딩 박스 생성
-
-                    ratios, terminals = command2action([action], ratios, terminals)
-
-                    print(' ratios =', ratios)
-
-                    im = images[j].astype(np.float32) / 255 - 0.5
-                    bbox = generate_bbox([im], ratios)
-
-                    # print ( 'bbox == ' , bbox )
-
-                    # New Cropped Image 생성 && Resize to ( 227, 227 )
-                    img = crop_input([im], bbox)
-
-                    # Score , Feature of newly Cropped image
-                    new_scores, new_features = evaluate_aesthetics_score_resized(img)
-
-                    print(' new_scores = ', new_scores)
-                    # print ( ' new_features = ' , new_features )
-                    # Reward 계산
-                    reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
-
-                    # Check Aspect Ratio with validation
-                    is_valid, asratio, penalty = validate_aspect_ratio(bbox)
-                    
-                    if not is_valid:
-                        print('Invalid aspect ratio: {:.2f} (penalty: {})'.format(asratio, penalty))
-                        reward = reward - penalty
-                    else:
-                        print('Valid aspect ratio: {:.2f}'.format(asratio))
-
-                    print('reward = ', reward)
-
-                    # sys.exit(0)
-
-                    # 각 타임스텝마다 Cropped 이미지 생성
-
-                    # print( 'bbox = ' , bbox)
-                    # 정책의 최대값
-                    self.avg_p_max += np.amax(self.actor.predict(
-                        np.float32(history)))
-
-                    score += reward
-
-                    # 샘플을 저장
-                    self.append_sample(history, action, reward)
-                    print(' {}  ### reward  222 = {} '.format(self.t, reward))
-
-                    # if self.t == 1000:
-                    # sys.exit(0)
-
-                    step += 1
-                    self.t += 1
-
-                    if step == self.T_max:
-                        done = True
-
-                    # 에피소드가 끝나거나 최대 타임스텝 수에 도달하면 학습을 진행
-                    if self.t % self.t_max or done:
-                        self.train_model(done)
-                        self.update_local_model()
-
-                    if done:
-                        # 각 에피소드 당 학습 정보를 기록
-                        episode += 1
-                        print("episode:", episode, "  score:", score, "  step:", step ,  "  avg_p_max:" , self.avg_p_max , 
-                              "  avg_p_max/step:" , self.avg_p_max / float(step) )
-                        
-                        # Print error statistics periodically
-                        if episode % 100 == 0:
-                            total_processed = self.total_images_processed + self.total_images_failed
-                            if total_processed > 0:
-                                success_rate = (self.total_images_processed / float(total_processed)) * 100
-                                print("\n" + "="*60)
-                                print("Image Processing Statistics (Episode {}):".format(episode))
-                                print("  Total processed: {}".format(self.total_images_processed))
-                                print("  Total failed: {}".format(self.total_images_failed))
-                                print("  Success rate: {:.2f}%".format(success_rate))
-                                print("="*60 + "\n")
-
-                        stats = [score, self.avg_p_max / float(step),
-                                 step]
-                        for i in range(len(stats)):
-                            self.sess.run(self.update_ops[i], feed_dict={
-                                self.summary_placeholders[i]: float(stats[i])
-                            })
-                        summary_str = self.sess.run(self.summary_op)
-                        self.summary_writer.add_summary(summary_str, episode + 1)
-                        self.avg_p_max = 0
-                        self.avg_loss = 0
-                        step = 0
+    # DEPRECATED: Use train_episode() instead
+    def train9000_(self, TrainPath ):
+        """
+        DEPRECATED: This function is kept for backward compatibility.
+        Please use train_episode(TrainPath, num_batches=281, verbose=True) instead.
+        """
+        print("WARNING: train9000_() is deprecated. Use train_episode() instead.")
+        return self.train_episode(TrainPath, num_batches=281, verbose=True)
 
     def run(self):
         global episode
@@ -829,10 +670,7 @@ class Agent(threading.Thread):
 
         #env = gym.make(env_name)
 
-
-
         # 입력 이미지
-
 
         for  epoch_step  in range ( self.epoch_size) :
 
@@ -840,7 +678,10 @@ class Agent(threading.Thread):
             #self.train_( TrainPath )
             print( ' epoch_step  == ' , epoch_step ) 
             TrainPath = '../AVA/Train8954'
-            self.train9000_( TrainPath )
+            
+            # Use new unified function with sequential sampling
+            # num_batches = 281 processes approximately 9000 images (281 * 32)
+            self.train_episode(TrainPath, num_batches=281, verbose=True, use_random_sampling=False)
 
         #sys.exit(0)
 
