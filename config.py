@@ -26,7 +26,12 @@ STEP_PENALTY = 0.001
 BATCH_SIZE = 32
 TRAIN_SIZE = 9000
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE  # 281
-EPOCH_SIZE = 100000
+EPOCH_SIZE = 20
+
+# --- K-fold Cross-Validation Settings ---
+USE_K_FOLD = True
+K_FOLDS = 5
+VALIDATION_FREQ = 1 # Perform validation after every epoch
 
 # --- Image Validation Settings ---
 VALID_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}

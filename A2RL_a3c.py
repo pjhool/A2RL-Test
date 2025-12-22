@@ -140,6 +140,33 @@ def validate_aspect_ratio(bbox, min_ratio=config.MIN_ASPECT_RATIO, max_ratio=con
     return True, aspect_ratio, 0.0
 
 
+def get_k_fold_splits(train_path, k=5):
+    """
+    Split files in train_path into K folds.
+    """
+    files = [f for f in listdir(train_path) if isfile(join(train_path, f))]
+    random.shuffle(files)
+    
+    fold_size = len(files) // k
+    folds = []
+    for i in range(k):
+        if i == k - 1:
+            folds.append(files[i * fold_size:])
+        else:
+            folds.append(files[i * fold_size : (i + 1) * fold_size])
+    
+    splits = []
+    for i in range(k):
+        val_files = folds[i]
+        train_files = []
+        for j in range(k):
+            if i != j:
+                train_files.extend(folds[j])
+        splits.append((train_files, val_files))
+        
+    return splits
+
+
 # input : original image
 def evaluate_aesthetics_score(images):
 
@@ -217,18 +244,60 @@ class A3CAgent:
 
     # 쓰레드를 만들어 학습을 하는 함수
     def train(self):
-        # 쓰레드 수만큼 Agent 클래스 생성
-        agents = [Agent(self.action_size, self.state_size,
-                        [self.actor, self.critic], self.sess,
-                        self.optimizer, self.discount_factor,
-                        [self.summary_op, self.summary_placeholders,
-                         self.update_ops, self.summary_writer])
-                  for _ in range(self.threads)]
+        if config.USE_K_FOLD:
+            logger.info('Starting K-fold cross-validation (K={})'.format(config.K_FOLDS))
+            splits = get_k_fold_splits(config.TRAIN_PATH, config.K_FOLDS)
+            
+            for fold_idx, (train_files, val_files) in enumerate(splits):
+                logger.info('=== Fold {}/{} ==='.format(fold_idx + 1, config.K_FOLDS))
+                
+                # Reset model weights for each fold
+                logger.info('Resetting model weights for fold {}'.format(fold_idx + 1))
+                self.sess.run(tf.global_variables_initializer())
+                
+                # Reset episode counter for each fold if needed, or keep it cumulative
+                # global episode
+                # episode = 0
+                # 쓰레드 수만큼 Agent 클래스 생성
+                agents = [Agent(self.action_size, self.state_size,
+                                [self.actor, self.critic], self.sess,
+                                self.optimizer, self.discount_factor,
+                                [self.summary_op, self.summary_placeholders,
+                                 self.update_ops, self.summary_writer],
+                                train_files=train_files, val_files=val_files)
+                          for _ in range(self.threads)]
 
-        # 각 쓰레드 시작
-        for agent in agents:
-            time.sleep(1)
-            agent.start()
+                # 각 쓰레드 시작
+                for agent in agents:
+                    time.sleep(1)
+                    agent.start()
+                
+                # Wait for agents to finish their epochs for this fold
+                for agent in agents:
+                    agent.join()
+                
+                logger.info('Fold {} completed.'.format(fold_idx + 1))
+                
+                # Save model after each fold
+                now = datetime.now().strftime("%Y%m%d%H%M%S")
+                logdir = "{}/A2RL_a3c_fold{}_{}".format(config.SAVE_MODEL_DIR, fold_idx + 1, now)
+                self.save_model(logdir)
+            
+            logger.info('All folds completed.')
+            return
+        else:
+            # 쓰레드 수만큼 Agent 클래스 생성
+            agents = [Agent(self.action_size, self.state_size,
+                            [self.actor, self.critic], self.sess,
+                            self.optimizer, self.discount_factor,
+                            [self.summary_op, self.summary_placeholders,
+                             self.update_ops, self.summary_writer])
+                      for _ in range(self.threads)]
+
+            # 각 쓰레드 시작
+            for agent in agents:
+                time.sleep(1)
+                agent.start()
 
         # 10분(600초)에 한번씩 모델을 저장
         while True:
@@ -358,7 +427,7 @@ class A3CAgent:
 # 액터러너 클래스(쓰레드)
 class Agent(threading.Thread):
     def __init__(self, action_size, state_size, model, sess,
-                 optimizer, discount_factor, summary_ops):
+                 optimizer, discount_factor, summary_ops, train_files=None, val_files=None):
         threading.Thread.__init__(self)
 
         # A3CAgent 클래스에서 상속
@@ -370,6 +439,9 @@ class Agent(threading.Thread):
         self.discount_factor = discount_factor
         [self.summary_op, self.summary_placeholders,
          self.update_ops, self.summary_writer] = summary_ops
+        
+        self.train_files = train_files
+        self.val_files = val_files
 
         # 지정된 타임스텝동안 샘플을 저장할 리스트
         self.states, self.actions, self.rewards = [], [], []
@@ -412,7 +484,7 @@ class Agent(threading.Thread):
 
     #  This is the      definition      of      helper      function
 
-    def _load_and_validate_batch(self, TrainPath, batch_size, use_random_sampling=False):
+    def _load_and_validate_batch(self, TrainPath, batch_size, use_random_sampling=False, file_list=None):
         """
         Load and validate a batch of images.
         
@@ -420,31 +492,40 @@ class Agent(threading.Thread):
             TrainPath: Path to training images folder
             batch_size: Number of images to load
             use_random_sampling: If True, use random sampling. If False, use sequential sampling.
+            file_list: Optional list of files to use. If None, reads from TrainPath.
         
         Returns:
             tuple: (images, images_filename) - lists of loaded images and their filenames
         """
-        trainfiles = [f for f in listdir(TrainPath) if isfile(join(TrainPath, f))]
+        if file_list is not None:
+            trainfiles = file_list
+        else:
+            trainfiles = [f for f in listdir(TrainPath) if isfile(join(TrainPath, f))]
+            
         total_files = len(trainfiles)
         
+        if total_files == 0:
+            logger.warning('No files found for batch loading.')
+            return [], []
+
         if use_random_sampling:
             # Random sampling
-            rand_index = np.random.choice(total_files, size=batch_size, replace=False)
+            num_to_sample = min(batch_size, total_files)
+            rand_index = np.random.choice(total_files, size=num_to_sample, replace=False)
             logger.debug('Random sampling - indices: %s', rand_index)
             trainfiles_batch = [trainfiles[index] for index in rand_index]
         else:
             # Sequential sampling
             start_idx = self.current_batch_index * batch_size
-            end_idx = min(start_idx + batch_size, total_files)
             
             # Wrap around if we reach the end
             if start_idx >= total_files:
                 self.current_batch_index = 0
                 start_idx = 0
-                end_idx = min(batch_size, total_files)
+                
+            end_idx = min(start_idx + batch_size, total_files)
             
-            logger.debug('Sequential sampling - batch %d: indices [%d, %d)', 
-                        self.current_batch_index, start_idx, end_idx)
+            logger.debug('Sequential sampling - indices [%d, %d)', start_idx, end_idx)
             
             trainfiles_batch = trainfiles[start_idx:end_idx]
             self.current_batch_index += 1
@@ -614,17 +695,16 @@ class Agent(threading.Thread):
                 self.avg_loss = 0
                 step = 0
 
-    def train_episode(self, TrainPath, num_batches=1, verbose=True, use_random_sampling=False):
+    def train_episode(self, TrainPath, num_batches=1, verbose=True, use_random_sampling=False, file_list=None):
         """
         Unified training function that replaces train_() and train9000_().
         
         Args:
             TrainPath: Path to training images folder
             num_batches: Number of batches to process
-                        - 1: equivalent to train_()
-                        - 281 (9000/32): equivalent to train9000_()
             verbose: Whether to print filenames during processing
             use_random_sampling: If True, use random sampling. If False, use sequential sampling.
+            file_list: Optional list of files to use.
         """
         global episode, global_dtype, a3c_graph
         
@@ -634,12 +714,43 @@ class Agent(threading.Thread):
             
             # Load and validate batch
             images, images_filename = self._load_and_validate_batch(
-                TrainPath, self.batch_size, use_random_sampling)
+                TrainPath, self.batch_size, use_random_sampling, file_list=file_list)
             
             # Process each image
             for j in range(len(images)):
                 filename = images_filename[j] if verbose else None
                 self._process_single_image(images[j], filename)
+
+    def validate_episode(self, TrainPath, file_list, verbose=True):
+        """
+        Run episodes on validation set without training.
+        """
+        logger.info('=== Validation Phase ===')
+        # Reset current_batch_index for validation if it was used sequentially
+        old_batch_index = self.current_batch_index
+        self.current_batch_index = 0
+        
+        # Calculate number of batches for validation
+        num_batches = (len(file_list) + self.batch_size - 1) // self.batch_size
+        
+        # Temporarily override train_model to do nothing
+        original_train_model = self.train_model
+        self.train_model = lambda done: None
+        
+        try:
+            for batch_idx in range(num_batches):
+                images, images_filename = self._load_and_validate_batch(
+                    TrainPath, self.batch_size, use_random_sampling=False, file_list=file_list)
+                
+                for j in range(len(images)):
+                    filename = images_filename[j] if verbose else None
+                    self._process_single_image(images[j], filename)
+        finally:
+            # Restore original train_model
+            self.train_model = original_train_model
+            self.current_batch_index = old_batch_index
+        
+        logger.info('=== Validation Finished ===')
 
     #  This is the      definition      of      helper      function
 
@@ -667,20 +778,24 @@ class Agent(threading.Thread):
         global global_dtype
         global a3c_graph
 
-        #env = gym.make(env_name)
-
-        # 입력 이미지
-
-        for  epoch_step  in range ( self.epoch_size) :
-
-            #TrainPath = '../AVA/Train'
-            #self.train_( TrainPath )
+        for epoch_step in range(self.epoch_size):
             logger.info('Epoch step: %d', epoch_step)
             TrainPath = config.TRAIN_PATH
             
-            # Use new unified function with sequential sampling
-            # num_batches processes approximately 9000 images (281 * 32)
-            self.train_episode(TrainPath, num_batches=config.NUM_BATCHES, verbose=True, use_random_sampling=False)
+            # Use current fold's train files or default to full path
+            train_list = self.train_files
+            
+            # num_batches processes images in batches
+            num_batches = config.NUM_BATCHES if train_list is None else (len(train_list) // self.batch_size)
+            
+            self.train_episode(TrainPath, num_batches=num_batches, verbose=True, 
+                               use_random_sampling=False, file_list=train_list)
+            
+            # Validation phase
+            if (epoch_step + 1) % config.VALIDATION_FREQ == 0:
+                val_list = self.val_files
+                if val_list:
+                    self.validate_episode(TrainPath, val_list, verbose=True)
 
         #sys.exit(0)
 
