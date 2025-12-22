@@ -29,6 +29,7 @@ import sys
 
 import pickle
 import argparse
+import json
 
 import skimage.io as io
 import skimage.transform as transform
@@ -243,28 +244,38 @@ class A3CAgent:
 
 
     # 쓰레드를 만들어 학습을 하는 함수
-    def train(self):
+    def train(self, start_fold=0, start_epoch=0):
         if config.USE_K_FOLD:
             logger.info('Starting K-fold cross-validation (K={})'.format(config.K_FOLDS))
             splits = get_k_fold_splits(config.TRAIN_PATH, config.K_FOLDS)
             
             for fold_idx, (train_files, val_files) in enumerate(splits):
+                if fold_idx < start_fold:
+                    logger.info('Skipping Fold {} (already completed)'.format(fold_idx + 1))
+                    continue
+                    
                 logger.info('=== Fold {}/{} ==='.format(fold_idx + 1, config.K_FOLDS))
                 
-                # Reset model weights for each fold
-                logger.info('Resetting model weights for fold {}'.format(fold_idx + 1))
-                self.sess.run(tf.global_variables_initializer())
+                # Reset model weights only if we are starting a NEW fold
+                # If we resume within a fold (fold_idx == start_fold and start_epoch > 0), DO NOT reset.
+                if fold_idx > start_fold or (fold_idx == start_fold and start_epoch == 0):
+                    logger.info('Resetting model weights for fold {}'.format(fold_idx + 1))
+                    self.sess.run(tf.global_variables_initializer())
+                else:
+                    logger.info('Resuming within Fold {} - weight reset skipped.'.format(fold_idx + 1))
                 
-                # Reset episode counter for each fold if needed, or keep it cumulative
-                # global episode
-                # episode = 0
+                # Determine start epoch for this fold
+                current_start_epoch = start_epoch if fold_idx == start_fold else 0
+                
                 # 쓰레드 수만큼 Agent 클래스 생성
                 agents = [Agent(self.action_size, self.state_size,
                                 [self.actor, self.critic], self.sess,
                                 self.optimizer, self.discount_factor,
                                 [self.summary_op, self.summary_placeholders,
                                  self.update_ops, self.summary_writer],
-                                train_files=train_files, val_files=val_files)
+                                train_files=train_files, val_files=val_files,
+                                start_epoch=current_start_epoch,
+                                current_fold=fold_idx)
                           for _ in range(self.threads)]
 
                 # 각 쓰레드 시작
@@ -272,49 +283,74 @@ class A3CAgent:
                     time.sleep(1)
                     agent.start()
                 
+                # Start periodic save loop thread if not already running
+                if not hasattr(self, 'save_thread') or not self.save_thread.is_alive():
+                    self.save_thread = threading.Thread(target=self._periodic_save_loop)
+                    self.save_thread.daemon = True
+                    self.save_thread.start()
+                    logger.info('Started periodic save thread.')
+
                 # Wait for agents to finish their epochs for this fold
                 for agent in agents:
                     agent.join()
                 
                 logger.info('Fold {} completed.'.format(fold_idx + 1))
                 
+                # Reset start_epoch for subsequent folds
+                start_epoch = 0
+                
                 # Save model after each fold
                 now = datetime.now().strftime("%Y%m%d%H%M%S")
                 logdir = "{}/A2RL_a3c_fold{}_{}".format(config.SAVE_MODEL_DIR, fold_idx + 1, now)
-                self.save_model(logdir)
+                metadata = {
+                    'fold': fold_idx + 1,
+                    'epoch': config.EPOCH_SIZE, # Fold completed
+                    'episode': episode
+                }
+                self.save_model(logdir, metadata=metadata)
             
             logger.info('All folds completed.')
             return
         else:
-            # 쓰레드 수만큼 Agent 클래스 생성
+            # Standard training mode
             agents = [Agent(self.action_size, self.state_size,
                             [self.actor, self.critic], self.sess,
                             self.optimizer, self.discount_factor,
                             [self.summary_op, self.summary_placeholders,
-                             self.update_ops, self.summary_writer])
+                             self.update_ops, self.summary_writer],
+                            start_epoch=start_epoch)
                       for _ in range(self.threads)]
 
             # 각 쓰레드 시작
             for agent in agents:
                 time.sleep(1)
                 agent.start()
+            
+            # Start periodic save loop for standard mode
+            self._periodic_save_loop()
 
-        # 10분(600초)에 한번씩 모델을 저장
+    def _periodic_save_loop(self):
+        """
+        Periodic model saving loop. Runs in a separate thread for K-fold or 
+        main thread for standard mode (blocking until interrupt).
+        """
         while True:
-            time.sleep(  60 * 10)
-            #time.sleep(60*5)
-
-            #now = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            time.sleep(60 * 10) # 10 minutes
+            
             now = datetime.now().strftime("%Y%m%d%H%M%S")
-            logger.info('Model save timestamp: %s', now)
-            root_logdir = config.SAVE_MODEL_DIR  # save_model/A2RL_a3c
-            logdir = "{}/A2RL_a3c_run-{}".format(root_logdir, now)
-            logger.info('Saving model to: %s', logdir)
-
-            self.save_model(logdir)
-
-            logger.info('Model saved successfully: %s', logdir)
-            #sys.exit(0)
+            logger.info('Periodic model save timestamp: %s', now)
+            root_logdir = config.SAVE_MODEL_DIR
+            logdir = "{}/A2RL_a3c_periodic_{}".format(root_logdir, now)
+            
+            # Since we don't know the exact fold/epoch in this thread easily (it's globalish),
+            # we just save the current episode.
+            metadata = {
+                'fold': 0, # Could be improved by making fold/epoch global or class member
+                'epoch': 0,
+                'episode': episode
+            }
+            self.save_model(logdir, metadata=metadata)
+            logger.info('Periodic model saved successfully: %s', logdir)
 
     # 정책신경망과 가치신경망을 생성
     def build_model(self):
@@ -394,13 +430,34 @@ class A3CAgent:
         return train
 
     def load_model(self, name):
+        logger.info('Loading model from: %s', name)
         self.actor.load_weights(name + "_actor.h5")
         self.critic.load_weights(name + "_critic.h5")
+        
+        metadata_path = name + "_metadata.json"
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+                logger.info('Loaded metadata: %s', metadata)
+                return metadata
+            except Exception as e:
+                logger.error('Failed to load metadata: %s', e)
+        return None
 
-    def save_model(self, name):
-
+    def save_model(self, name, metadata=None):
+        logger.info('Saving model to: %s', name)
         self.actor.save_weights(name + "_actor.h5")
         self.critic.save_weights(name + "_critic.h5")
+        
+        if metadata:
+            metadata_path = name + "_metadata.json"
+            try:
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=4)
+                logger.info('Saved metadata to: %s', metadata_path)
+            except Exception as e:
+                logger.error('Failed to save metadata: %s', e)
 
     # 각 에피소드 당 학습 정보를 기록
     def setup_summary(self):
@@ -427,7 +484,8 @@ class A3CAgent:
 # 액터러너 클래스(쓰레드)
 class Agent(threading.Thread):
     def __init__(self, action_size, state_size, model, sess,
-                 optimizer, discount_factor, summary_ops, train_files=None, val_files=None):
+                 optimizer, discount_factor, summary_ops, train_files=None, val_files=None,
+                 start_epoch=0, current_fold=None):
         threading.Thread.__init__(self)
 
         # A3CAgent 클래스에서 상속
@@ -442,6 +500,8 @@ class Agent(threading.Thread):
         
         self.train_files = train_files
         self.val_files = val_files
+        self.start_epoch = start_epoch
+        self.current_fold = current_fold
 
         # 지정된 타임스텝동안 샘플을 저장할 리스트
         self.states, self.actions, self.rewards = [], [], []
@@ -778,7 +838,7 @@ class Agent(threading.Thread):
         global global_dtype
         global a3c_graph
 
-        for epoch_step in range(self.epoch_size):
+        for epoch_step in range(self.start_epoch, self.epoch_size):
             logger.info('Epoch step: %d', epoch_step)
             TrainPath = config.TRAIN_PATH
             
@@ -796,6 +856,13 @@ class Agent(threading.Thread):
                 val_list = self.val_files
                 if val_list:
                     self.validate_episode(TrainPath, val_list, verbose=True)
+            
+            # Save periodic checkpoint including metadata
+            # Only one thread needs to handle periodic saving to avoid conflicts
+            # However, the original code has a separate loop in A3CAgent.train
+            # But A3CAgent.train waits if K-fold is used (agent.join()).
+            # So the periodic save loop in A3CAgent.train won't run until ALL folds are done if we use agent.join().
+            # Fix: In K-fold mode, we should handle periodic saving differently or allow it in Agent.run.
 
         #sys.exit(0)
 
@@ -932,12 +999,12 @@ def pre_processing(next_observe, observe):
     return processed_observe
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='A2RL Training')
+    parser.add_argument('--resume', type=str, help='Path to model snapshot for resumption (excluding extensions)')
+    args = parser.parse_args()
+
     # 입력 이미지
-
-    # In the following example, we are going to feed only one image into the network
     batch_size = 1
-
-    # TODO: Change this if your model file is located somewhere else
     snapshot = config.MODEL_SNAPSHOT
 
     tf.reset_default_graph()
@@ -951,16 +1018,32 @@ if __name__ == "__main__":
     with tf.variable_scope("ranker") as scope:
         feature_vec = nw.build_alexconvnet(image_placeholder, var_dict, embedding_dim, SPP=SPP, pooling=pooling)
         score_func = nw.score(feature_vec)
-    # load pre-trained model
+    
+    # load pre-trained model (VFN)
     saver = tf.train.Saver(tf.global_variables())
     vfn_sess = tf.Session(config=tf.ConfigProto())
     vfn_sess.run(tf.global_variables_initializer())
     saver.restore(vfn_sess, snapshot)
 
-
-
-
     global_agent = A3CAgent(action_size=config.ACTION_SIZE)
-    global_agent.train()
+    
+    start_fold = 0
+    start_epoch = 0
+    
+    if args.resume:
+        metadata = global_agent.load_model(args.resume)
+        if metadata:
+            start_fold = metadata.get('fold', 1) - 1 # 1-indexed to 0-indexed
+            start_epoch = metadata.get('epoch', 0)
+            if start_epoch >= config.EPOCH_SIZE:
+                start_fold += 1
+                start_epoch = 0
+            
+            episode = metadata.get('episode', 0)
+            logger.info('Resuming from Fold {}, Epoch {}, Episode {}'.format(start_fold + 1, start_epoch, episode))
+        else:
+            logger.warning('Resume specified but metadata not found. Starting from scratch with loaded weights.')
+
+    global_agent.train(start_fold=start_fold, start_epoch=start_epoch)
 
 
