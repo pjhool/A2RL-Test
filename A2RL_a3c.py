@@ -1,5 +1,9 @@
 
+
 from __future__ import absolute_import
+
+import logging
+from logger_config import setup_logger
 
 from skimage.color import rgb2gray
 from skimage.transform import resize
@@ -62,6 +66,9 @@ drop_ratio = 0.5
 VALID_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
 MIN_FILE_SIZE = 1024  # 1 KB
 MIN_IMAGE_DIMENSION = 50  # minimum width/height in pixels
+
+# Initialize logger
+logger = setup_logger('A2RL', log_dir='../logs', level=logging.DEBUG, console_level=logging.INFO)
 
 # This is the definition of helper function
 def load_and_validate_image(filepath):
@@ -193,7 +200,7 @@ class A3CAgent:
 
         # 텐서보드 설정
 
-        print(' Parent   default graph', tf.get_default_graph())
+        logger.debug('Parent default graph: %s', tf.get_default_graph())
 
         self.sess = tf.InteractiveSession()
         K.set_session(self.sess)
@@ -234,21 +241,20 @@ class A3CAgent:
 
             #now = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             now = datetime.now().strftime("%Y%m%d%H%M%S")
-            print('now ==' , now )
-            # root_logdir = "tf_logs"  # save_model/A2RL_a3c
-            root_logdir = "../save_model"  # save_model/A2RL_a3c
+            logger.info('Model save timestamp: %s', now)
+            root_logdir = "../save_model"
             logdir = "{}/A2RL_a3c_run-{}".format(root_logdir, now)
-            print('logdir ==', logdir)
+            logger.info('Saving model to: %s', logdir)
 
             self.save_model(logdir)
 
-            print('sysexit ==', logdir)
+            logger.info('Model saved successfully: %s', logdir)
             #sys.exit(0)
 
     # 정책신경망과 가치신경망을 생성
     def build_model(self):
 
-        print(' Parent Model  default graph', tf.get_default_graph())
+        logger.debug('Parent Model default graph: %s', tf.get_default_graph())
         K.set_learning_phase(1)  # set learning phase
 
         input = Input(shape = self.state_size )
@@ -275,8 +281,8 @@ class A3CAgent:
         actor._make_predict_function()
         critic._make_predict_function()
 
-        actor.summary()
-        critic.summary()
+        # actor.summary()
+        # critic.summary()
 
         return actor, critic
 
@@ -428,7 +434,7 @@ class Agent(threading.Thread):
         if use_random_sampling:
             # Random sampling
             rand_index = np.random.choice(total_files, size=batch_size, replace=False)
-            print('Random sampling - indices: ', rand_index)
+            logger.debug('Random sampling - indices: %s', rand_index)
             trainfiles_batch = [trainfiles[index] for index in rand_index]
         else:
             # Sequential sampling
@@ -441,15 +447,15 @@ class Agent(threading.Thread):
                 start_idx = 0
                 end_idx = min(batch_size, total_files)
             
-            print('Sequential sampling - batch {}: indices [{}, {})'.format(
-                self.current_batch_index, start_idx, end_idx))
+            logger.debug('Sequential sampling - batch %d: indices [%d, %d)', 
+                        self.current_batch_index, start_idx, end_idx)
             
             trainfiles_batch = trainfiles[start_idx:end_idx]
             self.current_batch_index += 1
         
         trainfiles_batch_fullname = [join(TrainPath, x) for x in trainfiles_batch]
         
-        print('trainfiles_batch = ', trainfiles_batch_fullname)
+        logger.debug('Batch selection: %s', trainfiles_batch_fullname)
         
         # Load and validate images
         images = []
@@ -459,7 +465,7 @@ class Agent(threading.Thread):
             img, error = load_and_validate_image(x)
             
             if error:
-                print('Skipping {}: {}'.format(x, error))
+                logger.warning('Skipping %s: %s', x, error)
                 self.failed_images.append({'filename': x, 'error': error})
                 self.total_images_failed += 1
                 continue
@@ -468,7 +474,7 @@ class Agent(threading.Thread):
             images_filename.append(x)
             self.total_images_processed += 1
         
-        print('Loaded {} valid images'.format(len(images)))
+        logger.info('Loaded %d valid images', len(images))
         return images, images_filename
 
     def _process_single_image(self, image, filename=None):
@@ -486,12 +492,11 @@ class Agent(threading.Thread):
         
         scores, features = evaluate_aesthetics_score([image])
         if filename:
-            print('Poorly Cropped Image vs Well Cropped Image', filename)
+            logger.info('Aesthetic scores evaluation for %s: %s', filename, scores)
         else:
-            print('Poorly Cropped Image vs Well Cropped Image')
-        print(scores)
+            logger.info('Aesthetic scores evaluation: %s', scores)
         
-        print(' feature shape ', features[0].shape)
+        logger.debug('Feature shape: %s', features[0].shape)
         
         batch_size = 1
         terminals = np.zeros(batch_size)
@@ -501,7 +506,7 @@ class Agent(threading.Thread):
             global_score = scores[0]
             global_feature = features[0]
         
-        print(' global score = ', global_score)
+        logger.info('Global score: %.4f', global_score)
         
         score = 0
         done = False
@@ -516,29 +521,28 @@ class Agent(threading.Thread):
                 local_score = new_scores[0]
             
             observe = np.concatenate((global_feature, local_feature), axis=1)
-            print(' observe shape  = ', observe.shape)
+            logger.debug('Observe shape: %s', observe.shape)
             
             history = np.expand_dims(observe, axis=0)
             
-            print(' history shape  = ', history.shape)
-            print(' history   = ', history)
+            logger.debug('History shape: %s. History: %s', history.shape, history)
             
             action, policy = self.get_action(history)
             
-            print('action = ', action)
-            print('policy = ', policy)
+            logger.info('Step %d - Action: %d, Policy sum: %.4f', step, action, np.sum(policy))
+            logger.debug('Policy: %s', policy)
             
             if action == 13 and step > 1:
                 done = True
-                print(' done is True ')
+                logger.info('Episode termination action (13) received.')
             else:
-                print(' terminals = ', terminals)
+                logger.debug('Terminals: %s', terminals)
                 terminals[0] = 0
             
             # Generate bounding box
             ratios, terminals = command2action([action], ratios, terminals)
             
-            print(' ratios =', ratios)
+            logger.debug('Ratios: %s', ratios)
             
             im = image.astype(np.float32) / 255 - 0.5
             bbox = generate_bbox([im], ratios)
@@ -549,7 +553,7 @@ class Agent(threading.Thread):
             # Score, Feature of newly Cropped image
             new_scores, new_features = evaluate_aesthetics_score_resized(img)
             
-            print(' new_scores = ', new_scores)
+            logger.info('New scores: %s', new_scores)
             
             # Calculate reward
             reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
@@ -558,12 +562,12 @@ class Agent(threading.Thread):
             is_valid, asratio, penalty = validate_aspect_ratio(bbox)
             
             if not is_valid:
-                print('Invalid aspect ratio: {:.2f} (penalty: {})'.format(asratio, penalty))
+                logger.warning('Invalid aspect ratio: %.2f (penalty: %.1f)', asratio, penalty)
                 reward = reward - penalty
             else:
-                print('Valid aspect ratio: {:.2f}'.format(asratio))
+                logger.debug('Valid aspect ratio: %.2f', asratio)
             
-            print('reward = ', reward)
+            logger.info('Reward: %.4f', reward)
             
             # Policy maximum
             self.avg_p_max += np.amax(self.actor.predict(np.float32(history)))
@@ -572,7 +576,7 @@ class Agent(threading.Thread):
             
             # Save sample
             self.append_sample(history, action, reward)
-            print(' {}  ### reward  222 = {} '.format(self.t, reward))
+            logger.debug('Step %d reward: %.4f', self.t, reward)
             
             step += 1
             self.t += 1
@@ -588,21 +592,20 @@ class Agent(threading.Thread):
             if done:
                 # Record episode statistics
                 episode += 1
-                print("episode:", episode, "  score:", score, "  step:", step,
-                      "  avg_p_max:", self.avg_p_max,
-                      "  avg_p_max/step:", self.avg_p_max / float(step))
+                logger.info("Episode %d finished - Score: %.4f, Steps: %d, Avg Prob Max: %.4f", 
+                           episode, score, step, self.avg_p_max / float(step))
                 
                 # Print error statistics periodically
                 if episode % 100 == 0:
                     total_processed = self.total_images_processed + self.total_images_failed
                     if total_processed > 0:
                         success_rate = (self.total_images_processed / float(total_processed)) * 100
-                        print("\n" + "="*60)
-                        print("Image Processing Statistics (Episode {}):".format(episode))
-                        print("  Total processed: {}".format(self.total_images_processed))
-                        print("  Total failed: {}".format(self.total_images_failed))
-                        print("  Success rate: {:.2f}%".format(success_rate))
-                        print("="*60 + "\n")
+                        logger.info("\n" + "="*60 +
+                                   "\nImage Processing Statistics (Episode {}):".format(episode) +
+                                   "\n  Total processed: {}".format(self.total_images_processed) +
+                                   "\n  Total failed: {}".format(self.total_images_failed) +
+                                   "\n  Success rate: {:.2f}%".format(success_rate) +
+                                   "\n" + "="*60)
                 
                 stats = [score, self.avg_p_max / float(step), step]
                 for i in range(len(stats)):
@@ -631,7 +634,7 @@ class Agent(threading.Thread):
         
         for batch_idx in range(num_batches):
             if num_batches > 1:
-                print('\n=== Batch {}/{} ==='.format(batch_idx + 1, num_batches))
+                logger.info('=== Batch %d/%d ===', batch_idx + 1, num_batches)
             
             # Load and validate batch
             images, images_filename = self._load_and_validate_batch(
@@ -650,7 +653,7 @@ class Agent(threading.Thread):
         DEPRECATED: This function is kept for backward compatibility.
         Please use train_episode(TrainPath, num_batches=1, verbose=False) instead.
         """
-        print("WARNING: train_() is deprecated. Use train_episode() instead.")
+        logger.warning("train_() is deprecated. Use train_episode() instead.")
         return self.train_episode(TrainPath, num_batches=1, verbose=False)
 
 
@@ -660,7 +663,7 @@ class Agent(threading.Thread):
         DEPRECATED: This function is kept for backward compatibility.
         Please use train_episode(TrainPath, num_batches=281, verbose=True) instead.
         """
-        print("WARNING: train9000_() is deprecated. Use train_episode() instead.")
+        logger.warning("train9000_() is deprecated. Use train_episode() instead.")
         return self.train_episode(TrainPath, num_batches=281, verbose=True)
 
     def run(self):
@@ -676,7 +679,7 @@ class Agent(threading.Thread):
 
             #TrainPath = '../AVA/Train'
             #self.train_( TrainPath )
-            print( ' epoch_step  == ' , epoch_step ) 
+            logger.info('Epoch step: %d', epoch_step)
             TrainPath = '../AVA/Train8954'
             
             # Use new unified function with sequential sampling
@@ -701,7 +704,7 @@ class Agent(threading.Thread):
 
     # 정책신경망과 가치신경망을 업데이트
     def train_model(self, done):
-        print(' train model start !!! ')
+        logger.debug('Model training started')
         discounted_prediction = self.discounted_prediction(self.rewards, done)
 
         states = np.zeros((len(self.states), 1, 2000))
@@ -719,12 +722,12 @@ class Agent(threading.Thread):
         self.optimizer[1]([states, discounted_prediction])
         self.states, self.actions, self.rewards = [], [], []
 
-        print( ' train  model end!!! ')
+        logger.debug('Model training completed')
 
     # 로컬신경망을 생성하는 함수
     def build_local_model(self):
 
-        print(' Child build_local_model  graph', tf.get_default_graph())
+        logger.debug('Child build_local_model graph: %s', tf.get_default_graph())
         K.set_learning_phase(1)  # set learning phase
 
         input = Input(shape=self.state_size)
@@ -755,8 +758,8 @@ class Agent(threading.Thread):
         local_actor.set_weights(self.actor.get_weights())
         local_critic.set_weights(self.critic.get_weights())
 
-        local_actor.summary()
-        local_critic.summary()
+        # local_actor.summary()
+        # local_critic.summary()
 
         return local_actor, local_critic
 
@@ -778,12 +781,12 @@ class Agent(threading.Thread):
         action_array = [0, 1, 2, 3, 4, 9, 10 ]
 
         choice  = np.random.choice( action_array , 1)
-        print ( ' choice =' , choice )
+        logger.debug('Pre-test choice: %s', choice)
         action_index = choice[0]
-        print(' pre get_action == ' , action_index )
+        logger.debug('Pre-test get_action index: %d', action_index)
         policy = self.local_actor.predict(history)[0]
 
-        print(' pre get_action 2 ' , policy)
+        logger.debug('Pre-test policy: %s', policy)
         #print(' pre get_action 3 ', np.argmax(policy) )
         #action_index = np.argmax(policy)
 
@@ -794,10 +797,10 @@ class Agent(threading.Thread):
     def get_action(self, history):
         # 이미 정규화 in evaluate_aesthetics_score
         #history = np.float32(history / 255.)
-        print(' get_action')
+        logger.debug('Getting action...')
         policy = self.local_actor.predict(history)[0]
 
-        print(' get_action 2 ')
+        logger.debug('Action policy predicted.')
         action_index = np.random.choice(self.action_size, 1, p=policy)[0]
         return action_index, policy
 
