@@ -35,7 +35,8 @@ import network
 import network_vfn as nw
 
 from os import listdir
-from os.path import isfile, join
+from os.path import isfile, join, getsize
+import os
 
 from datetime import datetime
 
@@ -57,7 +58,85 @@ env_name = "BreakoutDeterministic-v4"
 
 drop_ratio = 0.5
 
+# Valid image extensions and validation parameters
+VALID_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+MIN_FILE_SIZE = 1024  # 1 KB
+MIN_IMAGE_DIMENSION = 50  # minimum width/height in pixels
+
 # This is the definition of helper function
+def load_and_validate_image(filepath):
+    """
+    Load and validate an image file.
+    
+    Args:
+        filepath: Full path to the image file
+    
+    Returns:
+        tuple: (image_array, error_message)
+               image_array is None if error occurred
+    """
+    try:
+        # Check file extension
+        _, ext = os.path.splitext(filepath.lower())
+        if ext not in VALID_IMAGE_EXTENSIONS:
+            return None, "Invalid extension: {}".format(ext)
+        
+        # Check file size
+        try:
+            file_size = getsize(filepath)
+            if file_size < MIN_FILE_SIZE:
+                return None, "File too small ({} bytes)".format(file_size)
+        except Exception as e:
+            return None, "Cannot get file size: {}".format(e)
+        
+        # Read image
+        img = io.imread(filepath)
+        
+        # Check dimensions
+        if img.ndim != 3:
+            return None, "Not a 3-channel image (ndim={})".format(img.ndim)
+        
+        # Extract RGB channels
+        img_rgb = img[:, :, :3]
+        
+        # Check minimum dimensions
+        if img_rgb.shape[0] < MIN_IMAGE_DIMENSION or img_rgb.shape[1] < MIN_IMAGE_DIMENSION:
+            return None, "Image too small: {}x{}".format(img_rgb.shape[0], img_rgb.shape[1])
+        
+        return img_rgb, None
+        
+    except Exception as e:
+        return None, "Error loading image: {}".format(str(e))
+
+
+def validate_aspect_ratio(bbox, min_ratio=0.5, max_ratio=2.0):
+    """
+    Validate aspect ratio of bounding box.
+    
+    Args:
+        bbox: Bounding box coordinates [[x1, y1, x2, y2]]
+        min_ratio: Minimum acceptable aspect ratio
+        max_ratio: Maximum acceptable aspect ratio
+    
+    Returns:
+        tuple: (is_valid, aspect_ratio, penalty)
+    """
+    x_width = bbox[0][2] - bbox[0][0]
+    y_height = bbox[0][3] - bbox[0][1]
+    
+    # Prevent division by zero
+    if y_height < 1e-6:
+        return False, 0.0, 5.0
+    
+    aspect_ratio = x_width / y_height
+    
+    # Check if aspect ratio is within acceptable range
+    if aspect_ratio < min_ratio or aspect_ratio > max_ratio:
+        return False, aspect_ratio, 5.0
+    
+    return True, aspect_ratio, 0.0
+
+
 # input : original image
 def evaluate_aesthetics_score(images):
 
@@ -312,6 +391,11 @@ class Agent(threading.Thread):
         self.train_size = 9000
         self. batch_size = 32    #32
 
+        # Error tracking
+        self.failed_images = []
+        self.total_images_processed = 0
+        self.total_images_failed = 0
+
         # VFN Preload
 
         #with open('vfn_rl.pkl', 'rb') as f:
@@ -345,16 +429,21 @@ class Agent(threading.Thread):
         print( 'trainfiles_batch = ' ,  trainfiles_batch_fullname)
         #print ( ' jo in path  ='  , join(TrainPath, '337580.jpg')  )
         # add the following codes in the main function
-        images = [  ]
+        images = []
+        images_filename = []
+        
         for x in trainfiles_batch_fullname:   # remember to replace with the filename of your test image
-            #print ( ' train_full_name  = ' , x)
-
-            y = io.imread(  x )
-            #print (' y == ' , y.shape , 'y.dim =' ,  y.ndim   )
-            if y.ndim != 3 :
-                print(' train_full_name  = ', x)
+            img, error = load_and_validate_image(x)
+            
+            if error:
+                print('Skipping {}: {}'.format(x, error))
+                self.failed_images.append({'filename': x, 'error': error})
+                self.total_images_failed += 1
                 continue
-            images.append (     y[:, :, :3] )
+            
+            images.append(img)
+            images_filename.append(x)
+            self.total_images_processed += 1
             # io.imread('test1.jpg')[:, :, :3]  # remember to replace with the filename of your test image
 
 
@@ -460,23 +549,14 @@ class Agent(threading.Thread):
                 # Reward 계산
                 reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
 
-                # Check Aspect Ratio
-                x_width = bbox[0][2] - bbox[0][0]
-                y_height = bbox[0][3] - bbox[0][1]
-
-
-
-
-                asratio = x_width/y_height
-
-                #print(' x_width   == ', x_width)
-                #print(' y_height  == ', y_height)
-                #print(' asratio   ==' , asratio)
-
-                #sys.exit(0)
-
-                if asratio < 0.5 or asratio > 2 :
-                    reward = reward - 5
+                # Check Aspect Ratio with validation
+                is_valid, asratio, penalty = validate_aspect_ratio(bbox)
+                
+                if not is_valid:
+                    print('Invalid aspect ratio: {:.2f} (penalty: {})'.format(asratio, penalty))
+                    reward = reward - penalty
+                else:
+                    print('Valid aspect ratio: {:.2f}'.format(asratio))
                     
                 print('reward = ', reward)
 
@@ -560,18 +640,20 @@ class Agent(threading.Thread):
             # print ( ' jo in path  ='  , join(TrainPath, '337580.jpg')  )
             # add the following codes in the main function
             images = []
-            images_filename = [] 
+            images_filename = []
+            
             for x in trainfiles_batch_fullname:  # remember to replace with the filename of your test image
-                # print ( ' train_full_name  = ' , x)
-
-                y = io.imread(x)
-                # print (' y == ' , y.shape , 'y.dim =' ,  y.ndim   )
-                if y.ndim != 3:
-                    print(' train_full_name  = ', x)
+                img, error = load_and_validate_image(x)
+                
+                if error:
+                    print('Skipping {}: {}'.format(x, error))
+                    self.failed_images.append({'filename': x, 'error': error})
+                    self.total_images_failed += 1
                     continue
-                images.append(y[:, :, :3])
-                # io.imread('test1.jpg')[:, :, :3]  # remember to replace with the filename of your test image
+                
+                images.append(img)
                 images_filename.append(x)
+                self.total_images_processed += 1
             # print(images )
 
             # sys.exit(0)
@@ -670,20 +752,14 @@ class Agent(threading.Thread):
                     # Reward 계산
                     reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
 
-                    # Check Aspect Ratio
-                    x_width = bbox[0][2] - bbox[0][0]
-                    y_height = bbox[0][3] - bbox[0][1]
-
-                    asratio = x_width / y_height
-
-                    # print(' x_width   == ', x_width)
-                    # print(' y_height  == ', y_height)
-                    # print(' asratio   ==' , asratio)
-
-                    # sys.exit(0)
-
-                    if asratio < 0.5 or asratio > 2:
-                        reward = reward - 5
+                    # Check Aspect Ratio with validation
+                    is_valid, asratio, penalty = validate_aspect_ratio(bbox)
+                    
+                    if not is_valid:
+                        print('Invalid aspect ratio: {:.2f} (penalty: {})'.format(asratio, penalty))
+                        reward = reward - penalty
+                    else:
+                        print('Valid aspect ratio: {:.2f}'.format(asratio))
 
                     print('reward = ', reward)
 
@@ -721,6 +797,18 @@ class Agent(threading.Thread):
                         episode += 1
                         print("episode:", episode, "  score:", score, "  step:", step ,  "  avg_p_max:" , self.avg_p_max , 
                               "  avg_p_max/step:" , self.avg_p_max / float(step) )
+                        
+                        # Print error statistics periodically
+                        if episode % 100 == 0:
+                            total_processed = self.total_images_processed + self.total_images_failed
+                            if total_processed > 0:
+                                success_rate = (self.total_images_processed / float(total_processed)) * 100
+                                print("\n" + "="*60)
+                                print("Image Processing Statistics (Episode {}):".format(episode))
+                                print("  Total processed: {}".format(self.total_images_processed))
+                                print("  Total failed: {}".format(self.total_images_failed))
+                                print("  Success rate: {:.2f}%".format(success_rate))
+                                print("="*60 + "\n")
 
                         stats = [score, self.avg_p_max / float(step),
                                  step]
