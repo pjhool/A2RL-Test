@@ -452,6 +452,50 @@ class A3CAgent:
                 logger.error('Failed to load metadata: %s', e)
         return None
 
+    def evaluate(self, test_files):
+        """
+        Evaluate the trained model on a list of test files and compare scores.
+        """
+        logger.info("Starting post-training evaluation on %d files", len(test_files))
+        results = []
+        
+        # Create a single Agent for evaluation
+        eval_agent = Agent(self.action_size, self.state_size,
+                          [self.actor, self.critic], self.sess,
+                          self.optimizer, self.discount_factor,
+                          [self.summary_op, self.summary_placeholders,
+                           self.update_ops, self.summary_writer])
+        
+        for i, filepath in enumerate(test_files):
+            logger.info("Evaluating [%d/%d]: %s", i+1, len(test_files), filepath)
+            img, error = load_and_validate_image(filepath)
+            if error:
+                logger.warning("Skipping %s: %s", filepath, error)
+                continue
+                
+            report = eval_agent.evaluate_cropping(img, filepath)
+            results.append(report)
+            
+        if not results:
+            logger.error("No images were successfully evaluated.")
+            return
+            
+        # Summary Report
+        avg_initial = np.mean([r['initial_score'] for r in results])
+        avg_final = np.mean([r['final_score'] for r in results])
+        avg_improvement = np.mean([r['improvement'] for r in results])
+        avg_steps = np.mean([r['steps'] for r in results])
+        
+        logger.info("\n" + "="*60 +
+                    "\nEvaluation Summary Report:" +
+                    "\n  Total Images: {}".format(len(results)) +
+                    "\n  Avg Initial Score: {:.4f}".format(avg_initial) +
+                    "\n  Avg Final Score:   {:.4f}".format(avg_final) +
+                    "\n  Avg Improvement:   {:.4f} ({:+.2f}%)".format(
+                        avg_improvement, (avg_improvement/abs(avg_initial)*100 if avg_initial != 0 else 0)) +
+                    "\n  Avg Steps:         {:.1f}".format(avg_steps) +
+                    "\n" + "="*60)
+
     def save_model(self, name, metadata=None):
         logger.info('Saving model to: %s', name)
         self.actor.save_weights(name + "_actor.h5")
@@ -840,6 +884,57 @@ class Agent(threading.Thread):
         logger.warning("train9000_() is deprecated. Use train_episode() instead.")
         return self.train_episode(TrainPath, num_batches=281, verbose=True)
 
+    def evaluate_cropping(self, image, filename=None):
+        """
+        Run the agent on an image and return before/after scores.
+        """
+        step = 0
+        t = 0
+        
+        initial_scores, _ = evaluate_aesthetics_score([image])
+        initial_score = initial_scores[0]
+        
+        current_image = image
+        done = False
+        
+        while step < self.T_max and not done:
+            # Get action from local actor
+            history = np.reshape(current_image, (1, 227, 227, 3)).astype(np.float32) / 255.0
+            policy = self.actor.predict(history)[0]
+            action_index = np.argmax(policy)
+            
+            # 10 is the index for 'terminal' or 'done' action in this environment
+            if action_index == 10:
+                done = True
+                break
+                
+            command = command2action(action_index)
+            bbox = generate_bbox(current_image, command)
+            
+            # Crop image
+            next_image = crop_input(current_image, bbox)
+            if next_image is None or 0 in next_image.shape:
+                done = True
+                break
+                
+            current_image = next_image
+            step += 1
+            
+        final_scores, _ = evaluate_aesthetics_score([current_image])
+        final_score = final_scores[0]
+        
+        report = {
+            'filename': filename,
+            'initial_score': initial_score,
+            'final_score': final_score,
+            'improvement': final_score - initial_score,
+            'steps': step
+        }
+        
+        logger.info("Evaluation for %s: Initial: %.4f -> Final: %.4f (Diff: %+.4f, Steps: %d)",
+                    filename, initial_score, final_score, final_score - initial_score, step)
+        return report
+
     def run(self):
         global episode
         global global_dtype
@@ -1012,6 +1107,7 @@ def pre_processing(next_observe, observe):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='A2RL Training')
     parser.add_argument('--resume', type=str, help='Path to model snapshot for resumption (excluding extensions)')
+    parser.add_argument('--evaluate', type=str, help='Path to model snapshot for evaluation (excluding extensions)')
     args = parser.parse_args()
 
     # 입력 이미지
@@ -1041,6 +1137,24 @@ if __name__ == "__main__":
     start_fold = 0
     start_epoch = 0
     
+    # Evaluation Mode
+    if args.evaluate:
+        logger.info("Evaluation mode triggered for model: %s", args.evaluate)
+        global_agent.load_model(args.evaluate)
+        
+        # Determine test files (using a subset of training data or K-fold split for demonstration)
+        # Here we just take the first few images from the training path for a quick evaluation
+        all_files = [os.path.abspath(os.path.join(config.TRAIN_PATH, f)) 
+                    for f in os.listdir(config.TRAIN_PATH) 
+                    if os.path.isfile(os.path.join(config.TRAIN_PATH, f))]
+        all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+        random.shuffle(all_files)
+        test_files = all_files[:20] # Evaluate 20 random images
+        
+        global_agent.evaluate(test_files)
+        sys.exit(0)
+    
+    # Resumption Logic
     if args.resume:
         metadata = global_agent.load_model(args.resume)
         if metadata:
@@ -1056,5 +1170,15 @@ if __name__ == "__main__":
             logger.warning('Resume specified but metadata not found. Starting from scratch with loaded weights.')
 
     global_agent.train(start_fold=start_fold, start_epoch=start_epoch)
+    
+    # Optional: Evaluate after full training
+    logger.info("Training completed. Running final evaluation...")
+    all_files = [os.path.abspath(os.path.join(config.TRAIN_PATH, f)) 
+                for f in os.listdir(config.TRAIN_PATH) 
+                if os.path.isfile(os.path.join(config.TRAIN_PATH, f))]
+    all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+    random.shuffle(all_files)
+    test_files = all_files[:20]
+    global_agent.evaluate(test_files)
 
 
