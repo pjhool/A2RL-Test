@@ -17,7 +17,7 @@ ACTOR_LR = 2.5e-4
 CRITIC_LR = 2.5e-4
 DISCOUNT_FACTOR = 0.99
 BETA = 0.05
-THREADS = 1  # Number of agent threads
+THREADS = 4  # Number of agent threads
 
 # --- RL Agent Parameters ---
 T_MAX = 50          # Maximum steps per episode

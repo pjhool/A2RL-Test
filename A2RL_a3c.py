@@ -267,16 +267,23 @@ class A3CAgent:
                 # Determine start epoch for this fold
                 current_start_epoch = start_epoch if fold_idx == start_fold else 0
                 
-                # 쓰레드 수만큼 Agent 클래스 생성
-                agents = [Agent(self.action_size, self.state_size,
-                                [self.actor, self.critic], self.sess,
-                                self.optimizer, self.discount_factor,
-                                [self.summary_op, self.summary_placeholders,
-                                 self.update_ops, self.summary_writer],
-                                train_files=train_files, val_files=val_files,
-                                start_epoch=current_start_epoch,
-                                current_fold=fold_idx)
-                          for _ in range(self.threads)]
+                # 쓰레드 수만큼 Agent 클래스 생성 및 데이터 분배
+                agents = []
+                for i in range(self.threads):
+                    # Distribute files among threads using slicing
+                    agent_train_files = train_files[i::self.threads]
+                    agent_val_files = val_files[i::self.threads] if val_files else None
+                    
+                    logger.info('Thread %d: allocated %d training images', i, len(agent_train_files))
+                    
+                    agents.append(Agent(self.action_size, self.state_size,
+                                        [self.actor, self.critic], self.sess,
+                                        self.optimizer, self.discount_factor,
+                                        [self.summary_op, self.summary_placeholders,
+                                         self.update_ops, self.summary_writer],
+                                        train_files=agent_train_files, val_files=agent_val_files,
+                                        start_epoch=current_start_epoch,
+                                        current_fold=fold_idx))
 
                 # 각 쓰레드 시작
                 for agent in agents:
@@ -846,7 +853,11 @@ class Agent(threading.Thread):
             train_list = self.train_files
             
             # num_batches processes images in batches
-            num_batches = config.NUM_BATCHES if train_list is None else (len(train_list) // self.batch_size)
+            if train_list is None:
+                num_batches = config.NUM_BATCHES
+            else:
+                # Ensure all images are covered
+                num_batches = (len(train_list) + self.batch_size - 1) // self.batch_size
             
             self.train_episode(TrainPath, num_batches=num_batches, verbose=True, 
                                use_random_sampling=False, file_list=train_list)
