@@ -28,13 +28,14 @@ import sys
 
 
 import pickle
-import argparse
 import json
-
+import argparse
+import shutil
+import cv2
 import skimage.io as io
 import skimage.transform as transform
 
-from actions import command2action, generate_bbox, crop_input
+from actions import command2action, generate_bbox, crop_input, get_action_name
 
 
 import network
@@ -45,6 +46,7 @@ from os.path import isfile, join, getsize
 import os
 
 from datetime import datetime
+from multiprocessing import Pool, cpu_count
 
 
 a3c_graph  = tf.get_default_graph()
@@ -66,6 +68,80 @@ drop_ratio = 0.5
 
 # Initialize logger
 logger = setup_logger('A2RL', log_dir=config.LOG_DIR, level=logging.DEBUG, console_level=logging.INFO)
+
+# Feature Scaling Helper Functions
+def load_feature_stats(stats_path):
+    """
+    Load pre-computed feature statistics from JSON file.
+    
+    Args:
+        stats_path: Path to feature statistics JSON file
+    
+    Returns:
+        dict: Feature statistics or None if file doesn't exist
+    """
+    if not os.path.exists(stats_path):
+        logger.warning('Feature stats file not found: %s', stats_path)
+        logger.warning('Feature scaling will use per-sample statistics')
+        return None
+    
+    try:
+        with open(stats_path, 'r') as f:
+            stats = json.load(f)
+        logger.info('Loaded feature statistics from: %s', stats_path)
+        logger.info('  Mean: %.6f, Std: %.6f', stats['feature_mean'], stats['feature_std'])
+        logger.info('  Computed from %d samples on %s', stats['num_samples'], stats['computed_date'])
+        return stats
+    except Exception as e:
+        logger.error('Failed to load feature stats: %s', e)
+        return None
+
+
+def apply_feature_scaling(features, method='standardization', stats=None, epsilon=1e-8):
+    """
+    Apply feature scaling to input features.
+    
+    Args:
+        features: numpy array of features to scale
+        method: 'standardization', 'minmax', or 'global'
+        stats: dict with 'feature_mean' and 'feature_std' for global method
+        epsilon: small value to prevent division by zero
+    
+    Returns:
+        scaled features (numpy array)
+    """
+    if method == 'standardization':
+        # Per-sample standardization
+        mean = np.mean(features)
+        std = np.std(features) + epsilon
+        scaled = (features - mean) / std
+        
+    elif method == 'minmax':
+        # Min-max scaling to [0, 1]
+        min_val = np.min(features)
+        max_val = np.max(features)
+        if max_val - min_val > epsilon:
+            scaled = (features - min_val) / (max_val - min_val)
+        else:
+            logger.warning('Feature range too small for min-max scaling, using original')
+            scaled = features
+            
+    elif method == 'global':
+        # Global statistics-based standardization
+        if stats is None:
+            logger.warning('Global method requires stats, falling back to per-sample standardization')
+            mean = np.mean(features)
+            std = np.std(features) + epsilon
+            scaled = (features - mean) / std
+        else:
+            mean = stats['feature_mean']
+            std = stats['feature_std'] + epsilon
+            scaled = (features - mean) / std
+    else:
+        logger.warning('Unknown scaling method: %s, using original features', method)
+        scaled = features
+    
+    return scaled
 
 # This is the definition of helper function
 def load_and_validate_image(filepath):
@@ -141,6 +217,65 @@ def validate_aspect_ratio(bbox, min_ratio=config.MIN_ASPECT_RATIO, max_ratio=con
     return True, aspect_ratio, 0.0
 
 
+def _preprocess_worker(args):
+    """
+    Worker function for parallel preprocessing.
+    Checks grayscale, persons, faces, and stats.
+    Returns (filename, resized_img, passed, error)
+    """
+    source_path, filename = args
+    filepath = os.path.join(source_path, filename)
+    
+    try:
+        # Load image
+        img = io.imread(filepath)
+        
+        # 1. Format & Channel Check
+        if img.ndim != 3 or img.shape[2] != 3:
+            return filename, None, False, None
+            
+        # Initialize detectors (local to worker)
+        hog = cv2.HOGDescriptor()
+        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        face_cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        face_cascade = cv2.CascadeClassifier(face_cascade_path)
+        
+        # 2. Person Detection (HOG)
+        img_cv = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        (rects, weights) = hog.detectMultiScale(img_cv, winStride=(8, 8), padding=(16, 16), scale=1.05)
+        if len(rects) > 0:
+            return filename, None, False, None
+            
+        # 3. Face Detection
+        gray_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray_cv, 1.1, 4)
+        if len(faces) > 0:
+            return filename, None, False, None
+            
+        # 4. Variance & Stats
+        img_std = np.std(img)
+        img_mean = np.mean(img)
+        channel_stds = np.std(img, axis=(0, 1))
+        max_channel_std = np.max(channel_stds)
+        
+        total_pixels = img.shape[0] * img.shape[1]
+        unique_colors = len(np.unique(img.reshape(-1, 3), axis=0))
+        color_ratio = float(unique_colors) / total_pixels
+        
+        if img_std < 5.0 or img_mean < 10.0 or img_mean > 245.0 or max_channel_std < 3.0 or color_ratio < 0.02:
+            return filename, None, False, None
+            
+        # 5. Success! Prepare for VFN
+        # VFN expects (227, 227) resized and normalized
+        img_vfn = img.astype(np.float32) / 255
+        img_resized = transform.resize(img_vfn, (227, 227)) - 0.5
+        
+        return filename, img_resized, True, None
+        
+    except Exception as e:
+        return filename, None, False, str(e)
+
+
 def get_k_fold_splits(train_path, k=5):
     """
     Split files in train_path into K folds.
@@ -167,6 +302,88 @@ def get_k_fold_splits(train_path, k=5):
         
     return splits
 
+def preprocess_dataset(source_path, target_path, threshold, num_workers=None):
+    """
+    Scan source_path for images, calculate aesthetic scores in parallel, 
+    and copy images with scores below threshold to target_path.
+    """
+    if num_workers is None:
+        num_workers = config.PREPROCESS_WORKERS
+        
+    if os.path.exists(target_path):
+        logger.info("Clearing existing target directory: %s", target_path)
+        shutil.rmtree(target_path)
+    
+    os.makedirs(target_path)
+    logger.info("Created clean target directory: %s", target_path)
+
+    all_files = [f for f in os.listdir(source_path) if isfile(join(source_path, f))]
+    image_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+    
+    logger.info("Found %d images in %s. Filtering in parallel with %d workers and threshold %.4f...", 
+                len(image_files), source_path, num_workers, threshold)
+    
+    # Initialize Pool
+    pool = Pool(processes=num_workers)
+    worker_args = [(source_path, f) for f in image_files]
+    
+    count = 0
+    total = len(image_files)
+    
+    batch_images = []
+    batch_filenames = []
+    
+    try:
+        # Use imap_unordered for better memory management and progress tracking
+        for i, result in enumerate(pool.imap_unordered(_preprocess_worker, worker_args)):
+            filename, img_resized, passed, error = result
+            
+            if error:
+                logger.warning("Failed to process %s: %s", filename, error)
+                continue
+            
+            if passed:
+                batch_images.append(img_resized)
+                batch_filenames.append(filename)
+                
+            # Aesthetic scoring in batches for efficiency
+            if len(batch_images) >= config.PREPROCESS_BATCH_SIZE:
+                scores, _ = evaluate_aesthetics_score_resized(batch_images)
+                for j, score in enumerate(scores):
+                    if 0 < score < threshold:
+                        shutil.copy2(join(source_path, batch_filenames[j]), join(target_path, batch_filenames[j]))
+                        count += 1
+                
+                batch_images = []
+                batch_filenames = []
+                
+            if (i + 1) % 100 == 0:
+                logger.info("Checked %d/%d images... (Passed CPU filters: %d, Kept: %d)", 
+                            i + 1, total, count + len(batch_images), count)
+                            
+        # Final batch
+        if batch_images:
+            scores, _ = evaluate_aesthetics_score_resized(batch_images)
+            for j, score in enumerate(scores):
+                if 0 < score < threshold:
+                    shutil.copy2(join(source_path, batch_filenames[j]), join(target_path, batch_filenames[j]))
+                    count += 1
+                    
+        pool.close()
+        pool.join()
+        
+    except KeyboardInterrupt:
+        logger.error("Preprocessing interrupted by user.")
+        pool.terminate()
+        pool.join()
+        sys.exit(1)
+    except Exception as e:
+        logger.error("Parallel preprocessing failed: %s", e)
+        pool.terminate()
+        pool.join()
+        raise
+
+    logger.info("Preprocessing complete. Total images kept: %d/%d", count, total)
 
 # input : original image
 def evaluate_aesthetics_score(images):
@@ -215,6 +432,8 @@ class A3CAgent:
         # 쓰레드의 갯수
         self.threads = config.THREADS
         #self.threads = 8
+        self.initial_load_path = None
+        self._weights_loaded = False
 
 
         # 정책신경망과 가치신경망을 생성
@@ -244,10 +463,13 @@ class A3CAgent:
 
 
     # 쓰레드를 만들어 학습을 하는 함수
-    def train(self, start_fold=0, start_epoch=0):
+    def train(self, train_path=None, start_fold=0, start_epoch=0):
+        if train_path is None:
+            train_path = config.TRAIN_PATH
+            
         if config.USE_K_FOLD:
-            logger.info('Starting K-fold cross-validation (K={})'.format(config.K_FOLDS))
-            splits = get_k_fold_splits(config.TRAIN_PATH, config.K_FOLDS)
+            logger.info('Starting K-fold cross-validation (K={}) using path: {}'.format(config.K_FOLDS, train_path))
+            splits = get_k_fold_splits(train_path, config.K_FOLDS)
             
             for fold_idx, (train_files, val_files) in enumerate(splits):
                 if fold_idx < start_fold:
@@ -258,9 +480,19 @@ class A3CAgent:
                 
                 # Reset model weights only if we are starting a NEW fold
                 # If we resume within a fold (fold_idx == start_fold and start_epoch > 0), DO NOT reset.
-                if fold_idx > start_fold or (fold_idx == start_fold and start_epoch == 0):
-                    logger.info('Resetting model weights for fold {}'.format(fold_idx + 1))
-                    self.sess.run(tf.global_variables_initializer())
+                # If we have initial weights to load, re-load them for each fold to ensure consistent starting point.
+                is_first_start_attempt = (fold_idx == start_fold and start_epoch == 0)
+                
+                if fold_idx > start_fold or is_first_start_attempt:
+                    if self.initial_load_path:
+                        logger.info('Reloading initial model weights for fold {} from {}'.format(fold_idx + 1, self.initial_load_path))
+                        self.load_model(self.initial_load_path)
+                    elif is_first_start_attempt and self._weights_loaded:
+                        # Already loaded via main block before train() call
+                        logger.info('Using previously loaded model weights for first fold.')
+                    else:
+                        logger.info('Resetting model weights to random for fold {}'.format(fold_idx + 1))
+                        self.sess.run(tf.global_variables_initializer())
                 else:
                     logger.info('Resuming within Fold {} - weight reset skipped.'.format(fold_idx + 1))
                 
@@ -281,9 +513,11 @@ class A3CAgent:
                                         self.optimizer, self.discount_factor,
                                         [self.summary_op, self.summary_placeholders,
                                          self.update_ops, self.summary_writer],
+                                        train_path=train_path,
                                         train_files=agent_train_files, val_files=agent_val_files,
                                         start_epoch=current_start_epoch,
-                                        current_fold=fold_idx))
+                                        current_fold=fold_idx,
+                                        thread_id=i))
 
                 # 각 쓰레드 시작
                 for agent in agents:
@@ -323,10 +557,11 @@ class A3CAgent:
             agents = [Agent(self.action_size, self.state_size,
                             [self.actor, self.critic], self.sess,
                             self.optimizer, self.discount_factor,
-                            [self.summary_op, self.summary_placeholders,
-                             self.update_ops, self.summary_writer],
-                            start_epoch=start_epoch)
-                      for _ in range(self.threads)]
+                             [self.summary_op, self.summary_placeholders,
+                              self.update_ops, self.summary_writer],
+                             start_epoch=start_epoch,
+                             thread_id=i)
+                       for i in range(self.threads)]
 
             # 각 쓰레드 시작
             for agent in agents:
@@ -440,6 +675,7 @@ class A3CAgent:
         logger.info('Loading model from: %s', name)
         self.actor.load_weights(name + "_actor.h5")
         self.critic.load_weights(name + "_critic.h5")
+        self._weights_loaded = True
         
         metadata_path = name + "_metadata.json"
         if os.path.exists(metadata_path):
@@ -535,8 +771,8 @@ class A3CAgent:
 # 액터러너 클래스(쓰레드)
 class Agent(threading.Thread):
     def __init__(self, action_size, state_size, model, sess,
-                 optimizer, discount_factor, summary_ops, train_files=None, val_files=None,
-                 start_epoch=0, current_fold=None):
+                 optimizer, discount_factor, summary_ops, train_path=None, train_files=None, val_files=None,
+                 start_epoch=0, current_fold=None, thread_id=0):
         threading.Thread.__init__(self)
 
         # A3CAgent 클래스에서 상속
@@ -549,10 +785,12 @@ class Agent(threading.Thread):
         [self.summary_op, self.summary_placeholders,
          self.update_ops, self.summary_writer] = summary_ops
         
+        self.train_path = train_path
         self.train_files = train_files
         self.val_files = val_files
         self.start_epoch = start_epoch
         self.current_fold = current_fold
+        self.thread_id = thread_id
 
         # 지정된 타임스텝동안 샘플을 저장할 리스트
         self.states, self.actions, self.rewards = [], [], []
@@ -583,6 +821,23 @@ class Agent(threading.Thread):
         
         # Batch index for sequential sampling
         self.current_batch_index = 0
+        
+        # Action tracking statistics
+        self.action_counts = np.zeros(self.action_size, dtype=np.int32)  # Cumulative across all episodes
+        self.episode_action_counts = np.zeros(self.action_size, dtype=np.int32)  # Per-episode counts
+        self.episode_action_history = []  # Stores action sequence for current episode
+
+        # Feature scaling setup
+        self.enable_feature_scaling = config.ENABLE_FEATURE_SCALING
+        self.feature_scaling_method = config.FEATURE_SCALING_METHOD
+        self.feature_epsilon = config.FEATURE_EPSILON
+        self.feature_stats = None
+        
+        if self.enable_feature_scaling and self.feature_scaling_method == 'global':
+            # Load pre-computed statistics for global scaling
+            self.feature_stats = load_feature_stats(config.FEATURE_STATS_PATH)
+            if self.feature_stats is None:
+                logger.warning('Global scaling enabled but stats not available, will use per-sample scaling')
 
         # VFN Preload
 
@@ -696,8 +951,18 @@ class Agent(threading.Thread):
         
         logger.info('Global score: %.4f', global_score)
         
+        # Filter out images with already high initial scores
+        if hasattr(config, 'INITIAL_SCORE_THRESHOLD') and global_score >= config.INITIAL_SCORE_THRESHOLD:
+            logger.info('Skipping image %s: Initial score %.4f exceeds threshold %.4f', 
+                        filename, global_score, config.INITIAL_SCORE_THRESHOLD)
+            return
+        
         score = 0
         done = False
+        
+        # Reset episode action history and counts for new episode
+        self.episode_action_history = []
+        self.episode_action_counts = np.zeros(self.action_size, dtype=np.int32)
         
         while step < self.T_max and not done:  # T_max = 50
             
@@ -711,16 +976,80 @@ class Agent(threading.Thread):
             observe = np.concatenate((global_feature, local_feature), axis=1)
             logger.debug('Observe shape: %s', observe.shape)
             
+            # Apply feature scaling if enabled
+            if self.enable_feature_scaling:
+                observe_original = observe.copy()  # Keep for diagnostics
+                observe = apply_feature_scaling(
+                    observe, 
+                    method=self.feature_scaling_method,
+                    stats=self.feature_stats,
+                    epsilon=self.feature_epsilon
+                )
+                
+                # Log scaling effect on first step or periodically
+                if step == 0 or (episode % 10 == 0 and step < 3):
+                    logger.info("Feature Scaling Applied (Episode %d, Step %d):", episode, step)
+                    logger.info("  Method: %s", self.feature_scaling_method)
+                    logger.info("  Before - Mean: %.6f, Std: %.6f", 
+                               np.mean(observe_original), np.std(observe_original))
+                    logger.info("  After  - Mean: %.6f, Std: %.6f", 
+                               np.mean(observe), np.std(observe))
+            
+            # Feature scale diagnostics
+            if step == 0 or (episode % 10 == 0 and step < 3):  # First step or first 3 steps every 10 episodes
+                feature_mean = np.mean(observe)
+                feature_std = np.std(observe)
+                feature_min = np.min(observe)
+                feature_max = np.max(observe)
+                feature_abs_max = np.max(np.abs(observe))
+                
+                logger.info("Feature Statistics (Episode %d, Step %d):", episode, step)
+                logger.info("  Mean: %.6f, Std: %.6f", feature_mean, feature_std)
+                logger.info("  Min: %.6f, Max: %.6f", feature_min, feature_max)
+                logger.info("  Abs Max: %.6f, Range: %.6f", feature_abs_max, feature_max - feature_min)
+                
+                # Global vs Local feature comparison
+                global_mean = np.mean(global_feature)
+                global_std = np.std(global_feature)
+                local_mean = np.mean(local_feature)
+                local_std = np.std(local_feature)
+                
+                logger.info("  Global Feature - Mean: %.6f, Std: %.6f", global_mean, global_std)
+                logger.info("  Local Feature  - Mean: %.6f, Std: %.6f", local_mean, local_std)
+            
             history = np.expand_dims(observe, axis=0)
             
             logger.debug('History shape: %s. History: %s', history.shape, history)
             
             action, policy = self.get_action(history)
             
-            logger.info('Step %d - Action: %d, Policy sum: %.4f', step, action, np.sum(policy))
+            # Track action (both cumulative and per-episode)
+            self.episode_action_history.append(action)
+            self.action_counts[action] += 1  # Cumulative count
+            self.episode_action_counts[action] += 1  # Episode count
+            
+            # Policy distribution diagnostics
+            if step == 0 or (episode % 10 == 0 and step < 3):
+                policy_entropy = -np.sum(policy * np.log(policy + 1e-10))
+                policy_max = np.max(policy)
+                policy_max_idx = np.argmax(policy)
+                
+                logger.info("Policy Statistics (Episode %d, Step %d):", episode, step)
+                logger.info("  Entropy: %.4f (Ideal: ~2.6, Problem: <1.0)", policy_entropy)
+                logger.info("  Max Prob: %.4f at Action %d (%s)", 
+                           policy_max, policy_max_idx, get_action_name(policy_max_idx))
+                
+                # Show top 3 actions
+                top3_indices = np.argsort(policy)[-3:][::-1]
+                top3_str = ', '.join(['A{}({}):{:.3f}'.format(i, get_action_name(i), policy[i]) 
+                                     for i in top3_indices])
+                logger.info("  Top 3 Actions: %s", top3_str)
+            
+            action_name = get_action_name(action)
+            logger.info('Step %d - Action: %d (%s), Policy sum: %.4f', step, action, action_name, np.sum(policy))
             logger.debug('Policy: %s', policy)
             
-            if action == 13 and step > 1:
+            if action == 13:
                 done = True
                 logger.info('Episode termination action (13) received.')
             else:
@@ -744,16 +1073,21 @@ class Agent(threading.Thread):
             logger.info('New scores: %s', new_scores)
             
             # Calculate reward
-            reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
-            
-            # Check Aspect Ratio with validation
-            is_valid, asratio, penalty = validate_aspect_ratio(bbox)
-            
-            if not is_valid:
-                logger.warning('Invalid aspect ratio: %.2f (penalty: %.1f)', asratio, penalty)
-                reward = reward - penalty
+            # Special handling for action 13: set reward to 0
+            if action == 13:
+                reward = 0.0
+                logger.info('Action 13 (STOP) - Reward set to 0')
             else:
-                logger.debug('Valid aspect ratio: %.2f', asratio)
+                reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
+                
+                # Check Aspect Ratio with validation
+                is_valid, asratio, penalty = validate_aspect_ratio(bbox)
+                
+                if not is_valid:
+                    logger.warning('Invalid aspect ratio: %.2f (penalty: %.1f)', asratio, penalty)
+                    reward = reward - penalty
+                else:
+                    logger.debug('Valid aspect ratio: %.2f', asratio)
             
             logger.info('Reward: %.4f', reward)
             
@@ -780,8 +1114,41 @@ class Agent(threading.Thread):
             if done:
                 # Record episode statistics
                 episode += 1
-                logger.info("Episode %d finished - Score: %.4f, Steps: %d, Avg Prob Max: %.4f", 
-                           episode, score, step, self.avg_p_max / float(step))
+                
+                # Log episode action history
+                action_history_str = ' -> '.join(['{}({})'.format(a, get_action_name(a)) for a in self.episode_action_history])
+                logger.info("Thread %d - Episode %d finished - Score: %.4f, Steps: %d, Avg Prob Max: %.4f", 
+                           self.thread_id, episode, score, step, self.avg_p_max / float(step))
+                logger.info("Action History: [%s]", action_history_str)
+                
+                # Log episode-specific action counts
+                episode_total = np.sum(self.episode_action_counts)
+                if episode_total > 0:
+                    ep_lines = ["Thread {} - Episode {} Action Distribution:".format(self.thread_id, episode)]
+                    for i in range(self.action_size):
+                        count = self.episode_action_counts[i]
+                        if count > 0:  # Only show actions that were used
+                            percentage = 100.0 * count / episode_total
+                            action_name = get_action_name(i)
+                            ep_lines.append("  Action {:2d} ({:15s}): {:2d} times ({:5.1f}%)".format(
+                                i, action_name, count, percentage))
+                    logger.info("\n" + "\n".join(ep_lines))
+                
+                # Print cumulative action statistics periodically
+                if episode % 10 == 0:
+                    total_actions = np.sum(self.action_counts)
+                    if total_actions > 0:
+                        cum_lines = ["="*60,
+                                     "Action Statistics (CUMULATIVE for Thread {}, Total Episode {}):".format(self.thread_id, episode)]
+                        for i in range(self.action_size):
+                            count = self.action_counts[i]
+                            percentage = 100.0 * count / total_actions
+                            action_name = get_action_name(i)
+                            cum_lines.append("  Action {:2d} ({:15s}): {:6d} times ({:6.2f}%)".format(
+                                i, action_name, count, percentage))
+                        cum_lines.append("  Total Actions: {}".format(total_actions))
+                        cum_lines.append("="*60)
+                        logger.info("\n" + "\n".join(cum_lines))
                 
                 # Print error statistics periodically
                 if episode % 100 == 0:
@@ -889,39 +1256,87 @@ class Agent(threading.Thread):
         Run the agent on an image and return before/after scores.
         """
         step = 0
-        t = 0
+        ratios = np.array([[0, 0, 20, 20]])
+        terminals = np.array([0])
         
-        initial_scores, _ = evaluate_aesthetics_score([image])
+        # Initial scoring and feature extraction (Global)
+        initial_scores, initial_features = evaluate_aesthetics_score([image])
         initial_score = initial_scores[0]
+        global_feature = initial_features[0]
+        
+        current_score = initial_score
+        local_feature = global_feature
         
         current_image = image
         done = False
         
         while step < self.T_max and not done:
-            # Get action from local actor
-            history = np.reshape(current_image, (1, 227, 227, 3)).astype(np.float32) / 255.0
+            # Prepare state: concatenate global and local features (2000-dim)
+            observe = np.concatenate((global_feature, local_feature), axis=1)
+            
+            # Apply feature scaling (same as training)
+            if self.enable_feature_scaling:
+                observe_original = observe.copy()
+                observe = apply_feature_scaling(
+                    observe,
+                    method=self.feature_scaling_method,
+                    stats=self.feature_stats,
+                    epsilon=self.feature_epsilon
+                )
+                
+                # Info logging for scaled features (first step of evaluation)
+                if step == 0:
+                    logger.info("Eval Step 0 - Scaling (%s): Before(mean=%.4f, std=%.4f), After(mean=%.4f, std=%.4f)",
+                                self.feature_scaling_method, np.mean(observe_original), np.std(observe_original),
+                                np.mean(observe), np.std(observe))
+            
+            history = np.expand_dims(observe, axis=0) # [1, 2000]
+            
+            # Get action from actor
             policy = self.actor.predict(history)[0]
             action_index = np.argmax(policy)
             
-            # 10 is the index for 'terminal' or 'done' action in this environment
-            if action_index == 10:
-                done = True
-                break
-                
-            command = command2action(action_index)
-            bbox = generate_bbox(current_image, command)
+            # Diagnostic: Log policy every step during evaluation
+            policy_entropy = -np.sum(policy * np.log(policy + 1e-10))
+            top3_indices = np.argsort(policy)[-3:][::-1]
+            top3_str = ', '.join(['A{}({}):{:.3f}'.format(i, get_action_name(i), policy[i]) 
+                                 for i in top3_indices])
             
-            # Crop image
-            next_image = crop_input(current_image, bbox)
-            if next_image is None or 0 in next_image.shape:
+            logger.info("Step %d - Action: %d (%s), Entropy: %.4f, Top 3: %s", 
+                        step, action_index, get_action_name(action_index), policy_entropy, top3_str)
+            
+            logger.debug("Step %d: action=%d, policy_sum=%.4f, policy[13]=%.4f", 
+                         step, action_index, np.sum(policy), policy[13])
+            
+            # Action 13 is the terminal action in this environment
+            if action_index == 13:
+                logger.info("Agent chose STOP action (13) at step %d", step)
                 done = True
                 break
                 
-            current_image = next_image
+            # Update ratios and terminals based on action
+            ratios, terminals = command2action([action_index], ratios, terminals)
+            if terminals[0] == 1:
+                logger.info("Terminal condition met via actions at step %d", step)
+                done = True
+                break
+            
+            # Generate bounding box (FIX: was missing!)
+            im = image.astype(np.float32) / 255.0 - 0.5
+            bbox = generate_bbox([im], ratios)
+            
+            # crop_input returns resized (227, 227) images
+            cropped_batch = crop_input([im], bbox)
+            
+            # Update local score and feature for next step
+            # evaluate_aesthetics_score_resized expects resized, normalized images
+            new_scores, new_features = evaluate_aesthetics_score_resized(cropped_batch)
+            
+            current_score = new_scores[0]
+            local_feature = new_features[0]
             step += 1
             
-        final_scores, _ = evaluate_aesthetics_score([current_image])
-        final_score = final_scores[0]
+        final_score = current_score
         
         report = {
             'filename': filename,
@@ -942,7 +1357,7 @@ class Agent(threading.Thread):
 
         for epoch_step in range(self.start_epoch, self.epoch_size):
             logger.info('Epoch step: %d', epoch_step)
-            TrainPath = config.TRAIN_PATH
+            TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
             # Use current fold's train files or default to full path
             train_list = self.train_files
@@ -1106,8 +1521,11 @@ def pre_processing(next_observe, observe):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='A2RL Training')
-    parser.add_argument('--resume', type=str, help='Path to model snapshot for resumption (excluding extensions)')
+    parser.add_argument('--resume', type=str, help='Path to model snapshot for resumption (including metadata, fold, epoch)')
+    parser.add_argument('--load_weights', type=str, help='Path to model weights to load as initial values (metadata ignored)')
     parser.add_argument('--evaluate', type=str, help='Path to model snapshot for evaluation (excluding extensions)')
+    parser.add_argument('--preprocess', action='store_true', help='Preprocess dataset (filter images by score)')
+    parser.add_argument('--workers', type=int, help='Number of worker processes for preprocessing')
     args = parser.parse_args()
 
     # 입력 이미지
@@ -1132,6 +1550,23 @@ if __name__ == "__main__":
     vfn_sess.run(tf.global_variables_initializer())
     saver.restore(vfn_sess, snapshot)
 
+    # Dataset Preprocessing
+    if args.preprocess:
+        logger.info("Starting dataset preprocessing...")
+        preprocess_dataset(config.TRAIN_PATH, config.FILTERED_TRAIN_PATH, config.INITIAL_SCORE_THRESHOLD, num_workers=args.workers)
+        if not args.evaluate: # If only preprocessing was requested, exit after completion
+            logger.info("Preprocessing finished. Exit.")
+            sys.exit(0)
+
+    # Determine training path
+    train_path = config.TRAIN_PATH
+    if config.USE_FILTERED_DATA:
+        if os.path.exists(config.FILTERED_TRAIN_PATH) and os.listdir(config.FILTERED_TRAIN_PATH):
+            logger.info("Using filtered dataset from: %s", config.FILTERED_TRAIN_PATH)
+            train_path = config.FILTERED_TRAIN_PATH
+        else:
+            logger.warning("USE_FILTERED_DATA is True but filtered path is empty or missing. Falling back to TRAIN_PATH.")
+
     global_agent = A3CAgent(action_size=config.ACTION_SIZE)
     
     start_fold = 0
@@ -1142,20 +1577,31 @@ if __name__ == "__main__":
         logger.info("Evaluation mode triggered for model: %s", args.evaluate)
         global_agent.load_model(args.evaluate)
         
-        # Determine test files (using a subset of training data or K-fold split for demonstration)
-        # Here we just take the first few images from the training path for a quick evaluation
-        all_files = [os.path.abspath(os.path.join(config.TRAIN_PATH, f)) 
-                    for f in os.listdir(config.TRAIN_PATH) 
-                    if os.path.isfile(os.path.join(config.TRAIN_PATH, f))]
+        # Determine test files
+        eval_source = train_path
+        all_files = [os.path.abspath(os.path.join(eval_source, f)) 
+                    for f in os.listdir(eval_source) 
+                    if os.path.isfile(os.path.join(eval_source, f))]
         all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
         random.shuffle(all_files)
-        test_files = all_files[:20] # Evaluate 20 random images
+        test_files = all_files[:100] # Evaluate 20 random images
         
         global_agent.evaluate(test_files)
         sys.exit(0)
     
-    # Resumption Logic
+    # Weight Loading Logic (Pre-training weights)
+    if args.load_weights:
+        logger.info('Loading initial weights from: %s', args.load_weights)
+        global_agent.initial_load_path = args.load_weights
+        metadata = global_agent.load_model(args.load_weights)
+        if metadata:
+            episode = metadata.get('episode', 0)
+            logger.info('Continuous episode count from loaded weights: %d', episode)
+        # Progress (fold, epoch) remains at 0 unless --resume also specified
+    
+    # Resumption Logic (Progress + Weights)
     if args.resume:
+        global_agent.initial_load_path = args.resume # Set as initial for subsequent folds if needed
         metadata = global_agent.load_model(args.resume)
         if metadata:
             start_fold = metadata.get('fold', 1) - 1 # 1-indexed to 0-indexed
@@ -1169,16 +1615,17 @@ if __name__ == "__main__":
         else:
             logger.warning('Resume specified but metadata not found. Starting from scratch with loaded weights.')
 
-    global_agent.train(start_fold=start_fold, start_epoch=start_epoch)
+    global_agent.train(train_path=train_path, start_fold=start_fold, start_epoch=start_epoch)
     
     # Optional: Evaluate after full training
     logger.info("Training completed. Running final evaluation...")
-    all_files = [os.path.abspath(os.path.join(config.TRAIN_PATH, f)) 
-                for f in os.listdir(config.TRAIN_PATH) 
-                if os.path.isfile(os.path.join(config.TRAIN_PATH, f))]
+    all_files = [os.path.abspath(os.path.join(train_path, f)) 
+                for f in os.listdir(train_path) 
+                if os.path.isfile(os.path.join(train_path, f))]
     all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
     random.shuffle(all_files)
-    test_files = all_files[:20]
+    logger.info('all_files len: %d', len(all_files))
+    test_files = all_files[:30]
     global_agent.evaluate(test_files)
 
 

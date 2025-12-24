@@ -5,7 +5,9 @@ Centralizes hyperparameters, paths, and validation thresholds.
 """
 
 # --- Paths ---
-TRAIN_PATH = '../AVA/Train8954'
+#TRAIN_PATH = '../AVA/Train8954'
+TRAIN_PATH = 'Y:\\Project_A2RL\\flickr-cropping-dataset\\data'
+      
 MODEL_SNAPSHOT = '../a2rl_model/model-spp-max'
 SAVE_MODEL_DIR = '../save_model'
 SUMMARY_DIR = '../summary/A2RL_a3c'
@@ -13,20 +15,33 @@ LOG_DIR = '../logs'
 ALEXNET_NPY = 'alexnet.npy'
 
 # --- A3C Hyperparameters ---
-ACTOR_LR = 2.5e-4
-CRITIC_LR = 2.5e-4
+#ACTOR_LR = 2.5e-4
+#CRITIC_LR = 2.5e-4
+ACTOR_LR = 1.0e-4
+CRITIC_LR = 1.0e-4
 DISCOUNT_FACTOR = 0.99
-BETA = 0.05
+#BETA = 0.2 # 
+#BETA = 0.05
+#BETA = 0.1
+#BETA = 0.1
+BETA = 0.15
+
 THREADS = 4  # Number of agent threads
 
 # --- RL Agent Parameters ---
 T_MAX = 50          # Maximum steps per episode
 UPDATE_FREQ = 10    # Model update frequency (t_max)
-STEP_PENALTY = 0.001
+#STEP_PENALTY = 0.001
+STEP_PENALTY = 0.0001
 BATCH_SIZE = 32
 TRAIN_SIZE = 9000
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE  # 281
-EPOCH_SIZE = 20
+EPOCH_SIZE = 10
+INITIAL_SCORE_THRESHOLD = 10.0
+PREPROCESS_BATCH_SIZE = 64
+PREPROCESS_WORKERS = 6 # Number of worker processes for parallel preprocessing
+FILTERED_TRAIN_PATH = '../AVA/Filtered_Train'
+USE_FILTERED_DATA = True # Set to True to use filtered data for training
 
 # --- K-fold Cross-Validation Settings ---
 USE_K_FOLD = True
@@ -50,3 +65,11 @@ RANKING_LOSS = 'svm'
 SPP = True
 POOLING = 'max'
 ACTION_SIZE = 14
+
+# --- Feature Scaling Settings ---
+#ENABLE_FEATURE_SCALING = True  # Enable/disable feature scaling
+ENABLE_FEATURE_SCALING = False  # Enable/disable feature scaling
+FEATURE_SCALING_METHOD = 'global'  # 'standardization', 'minmax', or 'global'
+#FEATURE_SCALING_METHOD = 'standardization'  # 'standardization', 'minmax', or 'global'
+FEATURE_STATS_PATH = 'feature_stats.json'  # Path to pre-computed statistics
+FEATURE_EPSILON = 1e-8  # Small value to prevent division by zero
