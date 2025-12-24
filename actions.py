@@ -4,6 +4,29 @@ import skimage.transform as transform
 
 import skimage.io as io
 
+# Action name mapping for logging
+ACTION_NAMES = {
+    0: "Zoom In (All)",
+    1: "Shrink (All)",
+    2: "Move Left-Down",
+    3: "Move Right-Up",
+    4: "Expand Top",
+    5: "Expand Left",
+    6: "Shrink Left",
+    7: "Shrink Bottom",
+    8: "Expand Bottom",
+    9: "Move Down",
+    10: "Move Left",
+    11: "Move Up",
+    12: "Move Right",
+    13: "STOP (Terminate)"
+}
+
+def get_action_name(action_id):
+    """Get human-readable name for action ID."""
+    return ACTION_NAMES.get(action_id, "Unknown")
+
+
 def command2action(command_ids, ratios, terminals):
 
     #print ( ' command2action command_ids = ' , command_ids )
