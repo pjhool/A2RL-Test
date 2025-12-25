@@ -5,13 +5,19 @@ Centralizes hyperparameters, paths, and validation thresholds.
 """
 
 # --- Paths ---
+import datetime
+import os
+now = datetime.datetime.now()
+date_str = now.strftime('%Y%m%d')
+time_str = now.strftime('%H%M%S')
+
 #TRAIN_PATH = '../AVA/Train8954'
 TRAIN_PATH = 'Y:\\Project_A2RL\\flickr-cropping-dataset\\data'
       
-MODEL_SNAPSHOT = '../a2rl_model/model-spp-max'
-SAVE_MODEL_DIR = '../save_model'
-SUMMARY_DIR = '../summary/A2RL_a3c'
-LOG_DIR = '../logs'
+MODEL_SNAPSHOT = './a2rl_model/model-spp-max'
+SAVE_MODEL_DIR = os.path.join('./save_model', date_str)
+SUMMARY_DIR = os.path.join('./summary/A2RL_a3c', date_str)
+LOG_DIR = os.path.join('./logs', date_str)
 ALEXNET_NPY = 'alexnet.npy'
 
 # --- A3C Hyperparameters ---
