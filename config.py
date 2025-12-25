@@ -24,19 +24,20 @@ DISCOUNT_FACTOR = 0.99
 #BETA = 0.05
 #BETA = 0.1
 #BETA = 0.1
-BETA = 0.15
+BETA = 0.05
 
 THREADS = 4  # Number of agent threads
 
 # --- RL Agent Parameters ---
 T_MAX = 50          # Maximum steps per episode
 UPDATE_FREQ = 10    # Model update frequency (t_max)
-#STEP_PENALTY = 0.001
-STEP_PENALTY = 0.0001
+#STEP_PENALTY = 0.0001
+STEP_PENALTY = 0.0
+MIN_STEPS = 5      # Encourage at least 5 steps before STOP
 BATCH_SIZE = 32
-TRAIN_SIZE = 9000
-NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE  # 281
-EPOCH_SIZE = 10
+TRAIN_SIZE = 100
+NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE  # 3
+EPOCH_SIZE = 1000
 INITIAL_SCORE_THRESHOLD = 10.0
 PREPROCESS_BATCH_SIZE = 64
 PREPROCESS_WORKERS = 6 # Number of worker processes for parallel preprocessing
@@ -44,7 +45,7 @@ FILTERED_TRAIN_PATH = '../AVA/Filtered_Train'
 USE_FILTERED_DATA = True # Set to True to use filtered data for training
 
 # --- K-fold Cross-Validation Settings ---
-USE_K_FOLD = True
+USE_K_FOLD = False
 K_FOLDS = 5
 VALIDATION_FREQ = 1 # Perform validation after every epoch
 
@@ -73,3 +74,7 @@ FEATURE_SCALING_METHOD = 'global'  # 'standardization', 'minmax', or 'global'
 #FEATURE_SCALING_METHOD = 'standardization'  # 'standardization', 'minmax', or 'global'
 FEATURE_STATS_PATH = 'feature_stats.json'  # Path to pre-computed statistics
 FEATURE_EPSILON = 1e-8  # Small value to prevent division by zero
+
+# --- Mini-Batch Training Settings ---
+ENABLE_MINI_BATCH = True
+MINI_BATCH_SIZE = 32 # Accumulate gradients over 32 steps/updates before applying

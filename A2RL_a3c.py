@@ -472,32 +472,18 @@ class A3CAgent:
             splits = get_k_fold_splits(train_path, config.K_FOLDS)
             
             for fold_idx, (train_files, val_files) in enumerate(splits):
-                if fold_idx < start_fold:
-                    logger.info('Skipping Fold {} (already completed)'.format(fold_idx + 1))
-                    continue
-                    
                 logger.info('=== Fold {}/{} ==='.format(fold_idx + 1, config.K_FOLDS))
                 
-                # Reset model weights only if we are starting a NEW fold
-                # If we resume within a fold (fold_idx == start_fold and start_epoch > 0), DO NOT reset.
-                # If we have initial weights to load, re-load them for each fold to ensure consistent starting point.
-                is_first_start_attempt = (fold_idx == start_fold and start_epoch == 0)
-                
-                if fold_idx > start_fold or is_first_start_attempt:
-                    if self.initial_load_path:
-                        logger.info('Reloading initial model weights for fold {} from {}'.format(fold_idx + 1, self.initial_load_path))
-                        self.load_model(self.initial_load_path)
-                    elif is_first_start_attempt and self._weights_loaded:
-                        # Already loaded via main block before train() call
-                        logger.info('Using previously loaded model weights for first fold.')
-                    else:
-                        logger.info('Resetting model weights to random for fold {}'.format(fold_idx + 1))
-                        self.sess.run(tf.global_variables_initializer())
+                # Reset model weights for every fold
+                if self.initial_load_path:
+                    logger.info('Reloading initial model weights for fold {} from {}'.format(fold_idx + 1, self.initial_load_path))
+                    self.load_model(self.initial_load_path)
                 else:
-                    logger.info('Resuming within Fold {} - weight reset skipped.'.format(fold_idx + 1))
+                    logger.info('Resetting model weights to random for fold {}'.format(fold_idx + 1))
+                    self.sess.run(tf.global_variables_initializer())
                 
-                # Determine start epoch for this fold
-                current_start_epoch = start_epoch if fold_idx == start_fold else 0
+                # Always start from epoch 0 for each fold
+                current_start_epoch = 0
                 
                 # 쓰레드 수만큼 Agent 클래스 생성 및 데이터 분배
                 agents = []
@@ -641,19 +627,27 @@ class A3CAgent:
         # 정책 크로스 엔트로피 오류함수
         action_prob = K.sum(action * policy, axis=1)
         cross_entropy = K.log(action_prob + 1e-10) * advantages
-        cross_entropy = -K.sum(cross_entropy)
+        
+        if config.ENABLE_MINI_BATCH:
+            cross_entropy = -K.mean(cross_entropy) # Mean for Mini-Batch to prevent explosion
+        else:
+            cross_entropy = -K.sum(cross_entropy)  # Sum for Standard A3C
 
         # 탐색을 지속적으로 하기 위한 엔트로피 오류
         entropy = K.sum(policy * K.log(policy + 1e-10), axis=1)
-        entropy = K.sum(entropy)
+        
+        if config.ENABLE_MINI_BATCH:
+            entropy = K.mean(entropy) # Mean for Mini-Batch
+        else:
+            entropy = K.sum(entropy)  # Sum for Standard A3C
 
         # 두 오류함수를 더해 최종 오류함수를 만듬
         loss = cross_entropy + self.beta * entropy   # beta is 0.05
 
         optimizer = RMSprop(lr=self.actor_lr, rho=0.99, epsilon=0.01)
-        updates = optimizer.get_updates(self.actor.trainable_weights, [],loss)
-        train = K.function([self.actor.input, action, advantages],
-                           [loss], updates=updates)
+        
+        updates = optimizer.get_updates(self.actor.trainable_weights, [], loss)
+        train = K.function([self.actor.input, action, advantages], [loss], updates=updates)
         return train
 
     # 가치신경망을 업데이트하는 함수
@@ -1050,14 +1044,22 @@ class Agent(threading.Thread):
             logger.debug('Policy: %s', policy)
             
             if action == 13:
-                done = True
-                logger.info('Episode termination action (13) received.')
+                if step < config.MIN_STEPS:
+                    done = False
+                    logger.info('Action 13 (STOP) ignored (step %d < %d)', step, config.MIN_STEPS)
+                else:
+                    done = True
+                    logger.info('Episode termination action (13) received.')
             else:
                 logger.debug('Terminals: %s', terminals)
                 terminals[0] = 0
             
             # Generate bounding box
             ratios, terminals = command2action([action], ratios, terminals)
+            
+            # FIX: If we forced continue (ignored STOP), we must reset terminal flag
+            if action == 13 and step < config.MIN_STEPS:
+                terminals[0] = 0
             
             logger.debug('Ratios: %s', ratios)
             
@@ -1073,12 +1075,21 @@ class Agent(threading.Thread):
             logger.info('New scores: %s', new_scores)
             
             # Calculate reward
-            # Special handling for action 13: set reward to 0
+            score_diff = new_scores[0] - local_score
+            
             if action == 13:
-                reward = 0.0
-                logger.info('Action 13 (STOP) - Reward set to 0')
+                # Penalty for stopping too early
+                if step < config.MIN_STEPS:
+                    reward = -1.0
+                    logger.info('Action 13 (STOP) triggered too early (step %d < %d) - Penalty: %.4f', 
+                                step, config.MIN_STEPS, reward)
+                else:
+                    reward = 0.0
+                    logger.info('Action 13 (STOP) - Reward set to 0')
             else:
-                reward = np.sign(new_scores[0] - local_score) - self.step_penalty * (self.t + 1)
+                # Use continuous reward instead of sign() for more granular feedback
+                # Multiplied by 5 to make the signal stronger
+                reward = (score_diff * 5.0) - self.step_penalty * (self.t + 1)
                 
                 # Check Aspect Ratio with validation
                 is_valid, asratio, penalty = validate_aspect_ratio(bbox)
@@ -1309,13 +1320,24 @@ class Agent(threading.Thread):
                          step, action_index, np.sum(policy), policy[13])
             
             # Action 13 is the terminal action in this environment
+            # Action 13 is the terminal action in this environment
             if action_index == 13:
-                logger.info("Agent chose STOP action (13) at step %d", step)
-                done = True
-                break
+                if step < config.MIN_STEPS:
+                    logger.info("Agent chose STOP action (13) at step %d - IGNORED (step < MIN_STEPS)", step)
+                    # Do not break, continue loop
+                else:
+                    logger.info("Agent chose STOP action (13) at step %d", step)
+                    done = True
+                    break
                 
             # Update ratios and terminals based on action
             ratios, terminals = command2action([action_index], ratios, terminals)
+            
+            # CRITICAL FIX: If we forced continue (ignored STOP), we must reset the terminal flag
+            # otherwise the loop breaks below or command2action ignores future inputs
+            if action_index == 13 and step < config.MIN_STEPS:
+                 terminals[0] = 0
+                 
             if terminals[0] == 1:
                 logger.info("Terminal condition met via actions at step %d", step)
                 done = True
@@ -1356,18 +1378,27 @@ class Agent(threading.Thread):
         global a3c_graph
 
         for epoch_step in range(self.start_epoch, self.epoch_size):
-            logger.info('Epoch step: %d', epoch_step)
+            logger.info('Thread %d - Epoch step: %d', self.thread_id, epoch_step)
             TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
             # Use current fold's train files or default to full path
             train_list = self.train_files
             
-            # num_batches processes images in batches
+            # If standard mode (no pre-assigned files), load all from TrainPath
             if train_list is None:
-                num_batches = config.NUM_BATCHES
-            else:
-                # Ensure all images are covered
-                num_batches = (len(train_list) + self.batch_size - 1) // self.batch_size
+                from os import listdir
+                from os.path import isfile, join
+                all_files = [f for f in listdir(TrainPath) if isfile(join(TrainPath, f))]
+                train_list = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+            
+            # Shuffle the dataset at the start of each epoch for better generalization
+            if train_list is not None:
+                random.shuffle(train_list)
+                logger.info('Thread %d: Shuffled training dataset for epoch %d', self.thread_id, epoch_step)
+            
+            # num_batches processes images in batches
+            # Calculate specifically based on current list size
+            num_batches = (len(train_list) + self.batch_size - 1) // self.batch_size
             
             self.train_episode(TrainPath, num_batches=num_batches, verbose=True, 
                                use_random_sampling=False, file_list=train_list)
@@ -1417,8 +1448,48 @@ class Agent(threading.Thread):
 
         advantages = discounted_prediction - values
 
-        self.optimizer[0]([states, self.actions, advantages])
-        self.optimizer[1]([states, discounted_prediction])
+        # Mini-Batch Logic: Buffer data instead of immediate update
+        if config.ENABLE_MINI_BATCH:
+            if not hasattr(self, 'mini_batch_buffer'):
+                self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
+            
+            # Append current chunk's data to buffer
+            self.mini_batch_buffer['inputs'].append(states) # Use the processed 'states'
+            self.mini_batch_buffer['actions'].append(np.vstack(self.actions))
+            self.mini_batch_buffer['advantages'].append(advantages)
+            self.mini_batch_buffer['targets'].append(discounted_prediction)
+            
+            # Check if we have enough data (count number of chunks or total steps?)
+            # Let's count total steps accumulated
+            total_steps = sum(len(a) for a in self.mini_batch_buffer['advantages'])
+            
+            # A single chunk is usually 10 steps. MINI_BATCH_SIZE is e.g. 32.
+            # If MINI_BATCH_SIZE means "Number of chunks/updates to accumulate" (e.g. 32 updates):
+            # Then we check len(self.mini_batch_buffer['advantages']) >= config.MINI_BATCH_SIZE.
+            # If it means "Total samples" (e.g. 32 samples):
+            # That's too small (current batch is 10).
+            # Assuming config.MINI_BATCH_SIZE (32) means "32 Chunks" (320 samples) for stability.
+            
+            if len(self.mini_batch_buffer['advantages']) >= config.MINI_BATCH_SIZE:
+                # Concatenate all buffered data
+                batch_inputs = np.concatenate(self.mini_batch_buffer['inputs'], axis=0)
+                batch_actions = np.concatenate(self.mini_batch_buffer['actions'], axis=0)
+                batch_advantages = np.concatenate(self.mini_batch_buffer['advantages'], axis=0)
+                batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
+                
+                # Perform ONE large update
+                self.optimizer[0]([batch_inputs, batch_actions, batch_advantages])
+                self.optimizer[1]([batch_inputs, batch_targets])
+                
+                self.avg_loss += 0 # Loss calculation complex with function approach, skipping for perf
+                
+                # Clear buffer
+                self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
+        else:
+            # Standard immediate update
+            self.optimizer[0]([states, np.vstack(self.actions), advantages]) # Use processed 'states' and vstacked actions
+            self.optimizer[1]([states, discounted_prediction]) # Use processed 'states'
+
         self.states, self.actions, self.rewards = [], [], []
 
         logger.debug('Model training completed')
@@ -1586,7 +1657,17 @@ if __name__ == "__main__":
         random.shuffle(all_files)
         test_files = all_files[:100] # Evaluate 20 random images
         
-        global_agent.evaluate(test_files)
+        try:
+            global_agent.evaluate(test_files)
+        finally:
+             # Explicitly close sessions to prevent "NoneType not callable" error in __del__
+            if global_agent and global_agent.sess:
+                logger.info("Closing A3C Agent session...")
+                global_agent.sess.close()
+            
+            if 'vfn_sess' in locals() and vfn_sess:
+                logger.info("Closing VFN session...")
+                vfn_sess.close()
         sys.exit(0)
     
     # Weight Loading Logic (Pre-training weights)
@@ -1601,7 +1682,7 @@ if __name__ == "__main__":
     
     # Resumption Logic (Progress + Weights)
     if args.resume:
-        global_agent.initial_load_path = args.resume # Set as initial for subsequent folds if needed
+        # global_agent.initial_load_path = args.resume # DO NOT set this as initial path for all folds
         metadata = global_agent.load_model(args.resume)
         if metadata:
             start_fold = metadata.get('fold', 1) - 1 # 1-indexed to 0-indexed
@@ -1615,17 +1696,27 @@ if __name__ == "__main__":
         else:
             logger.warning('Resume specified but metadata not found. Starting from scratch with loaded weights.')
 
-    global_agent.train(train_path=train_path, start_fold=start_fold, start_epoch=start_epoch)
-    
-    # Optional: Evaluate after full training
-    logger.info("Training completed. Running final evaluation...")
-    all_files = [os.path.abspath(os.path.join(train_path, f)) 
-                for f in os.listdir(train_path) 
-                if os.path.isfile(os.path.join(train_path, f))]
-    all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
-    random.shuffle(all_files)
-    logger.info('all_files len: %d', len(all_files))
-    test_files = all_files[:30]
-    global_agent.evaluate(test_files)
+    try:
+        global_agent.train(train_path=train_path, start_fold=start_fold, start_epoch=start_epoch)
+        
+        # Optional: Evaluate after full training
+        logger.info("Training completed. Running final evaluation...")
+        all_files = [os.path.abspath(os.path.join(train_path, f)) 
+                    for f in os.listdir(train_path) 
+                    if os.path.isfile(os.path.join(train_path, f))]
+        all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+        random.shuffle(all_files)
+        logger.info('all_files len: %d', len(all_files))
+        test_files = all_files[:30]
+        global_agent.evaluate(test_files)
+    finally:
+        # Explicitly close sessions to prevent "NoneType not callable" error in __del__
+        if global_agent and global_agent.sess:
+            logger.info("Closing A3C Agent session...")
+            global_agent.sess.close()
+        
+        if 'vfn_sess' in locals() and vfn_sess:
+            logger.info("Closing VFN session...")
+            vfn_sess.close()
 
 
