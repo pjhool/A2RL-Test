@@ -455,8 +455,21 @@ class A3CAgent:
 
         self.summary_placeholders, self.update_ops, self.summary_op = \
             self.setup_summary()
+            
+        # Explicitly create summary directory with timestamp subfolder
+        # Structure: ./summary/A2RL_a3c/YYYYMMDD/events_HHMMSS
+        time_str = datetime.now().strftime("%H%M%S")
+        summary_dir = os.path.join(config.SUMMARY_DIR, "events_{}".format(time_str))
+        
+        if not os.path.exists(summary_dir):
+            try:
+                os.makedirs(summary_dir)
+                logger.info("Created summary directory: %s", summary_dir)
+            except OSError as e:
+                logger.error("Failed to create summary directory %s: %s", summary_dir, e)
+                
         self.summary_writer = \
-            tf.summary.FileWriter(config.SUMMARY_DIR, self.sess.graph)
+            tf.summary.FileWriter(summary_dir, self.sess.graph)
         #tf.summary.FileWriter(logdir, self.sess.graph)
 
 
@@ -565,10 +578,11 @@ class A3CAgent:
         while True:
             time.sleep(60 * 10) # 10 minutes
             
-            now = datetime.now().strftime("%Y%m%d%H%M%S")
-            logger.info('Periodic model save timestamp: %s', now)
+            # Use simpler time format for subfolder, as Date/StartTime is already in root_logdir
+            time_str = datetime.now().strftime("%H%M%S")
+            logger.info('Periodic model save time: %s', time_str)
             root_logdir = config.SAVE_MODEL_DIR
-            logdir = "{}/A2RL_a3c_periodic_{}".format(root_logdir, now)
+            logdir = "{}/checkpoint_{}".format(root_logdir, time_str)
             
             # Since we don't know the exact fold/epoch in this thread easily (it's globalish),
             # we just save the current episode.
@@ -727,6 +741,15 @@ class A3CAgent:
                     "\n" + "="*60)
 
     def save_model(self, name, metadata=None):
+        # Ensure the directory exists (important for date-based directories)
+        dir_name = os.path.dirname(name)
+        if dir_name and not os.path.exists(dir_name):
+            try:
+                os.makedirs(dir_name)
+                logger.info("Created model save directory: %s", dir_name)
+            except OSError as e:
+                logger.error("Failed to create directory %s: %s", dir_name, e)
+
         logger.info('Saving model to: %s', name)
         self.actor.save_weights(name + "_actor.h5")
         self.critic.save_weights(name + "_critic.h5")
@@ -1699,6 +1722,12 @@ if __name__ == "__main__":
     try:
         global_agent.train(train_path=train_path, start_fold=start_fold, start_epoch=start_epoch)
         
+        # Save Final Model
+        time_str = datetime.now().strftime("%H%M%S")
+        final_model_dir = os.path.join(config.SAVE_MODEL_DIR, "final_model_{}".format(time_str))
+        global_agent.save_model(final_model_dir, metadata={'episode': episode, 'status': 'final'})
+        logger.info("Final model saved to: %s", final_model_dir)
+
         # Optional: Evaluate after full training
         logger.info("Training completed. Running final evaluation...")
         all_files = [os.path.abspath(os.path.join(train_path, f)) 
