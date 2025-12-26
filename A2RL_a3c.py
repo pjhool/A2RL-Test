@@ -8,14 +8,52 @@ from logger_config import setup_logger
 
 from skimage.color import rgb2gray
 from skimage.transform import resize
-from keras.layers import Dense, Flatten, Input
-from keras.layers import LSTM, Dropout
+# Robust Keras/TensorFlow Compatibility Layer
+try:
+    # 1. Try tf_keras (Modern TF2 compatibility)
+    import tf_keras as keras
+    from tf_keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D
+    from tf_keras import backend as K
+    from tf_keras.models import Model
+    try:
+        from tf_keras.optimizers.legacy import RMSprop
+    except ImportError:
+        from tf_keras.optimizers import RMSprop
+    logger_info = "Using tf_keras (Modern TF2)"
+except ImportError:
+    try:
+        # 2. Try standard tensorflow.keras (Modern TF2)
+        from tensorflow.keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D
+        from tensorflow.keras import backend as K
+        from tensorflow.keras.models import Model
+        try:
+            from tensorflow.keras.optimizers.legacy import RMSprop
+        except ImportError:
+            from tensorflow.keras.optimizers import RMSprop
+        logger_info = "Using tensorflow.keras (Modern TF2)"
+    except ImportError:
+        # 3. Fallback to standalone Keras (Standard for TF 1.x / Legacy)
+        import keras
+        from keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D
+        from keras import backend as K
+        from keras.models import Model
+        from keras.optimizers import RMSprop
+        logger_info = "Using standalone Keras (Legacy/TF1.x)"
 
+# Determine which argument to use for learning rate
+# Older Keras uses 'lr', newer Keras uses 'learning_rate'
+import inspect
+try:
+    _sig = inspect.signature(RMSprop.__init__)
+    if 'learning_rate' in _sig.parameters:
+        K_LR_NAME = 'learning_rate'
+    else:
+        K_LR_NAME = 'lr'
+except (AttributeError, ValueError):
+    # Fallback for very old Python or Keras versions
+    K_LR_NAME = 'lr'
 
-from keras.layers.convolutional import Conv2D
-from keras.optimizers import RMSprop
-from keras import backend as K
-from keras.models import Model
+print("DEBUG: {}, Optimizer LR arg: {}".format(logger_info, K_LR_NAME))
 import tensorflow as tf
 import numpy as np
 import threading
@@ -60,6 +98,7 @@ global_dtype_np = np.float32
 # 멀티쓰레딩을 위한 글로벌 변수
 global episode
 episode = 0
+episode_lock = threading.Lock()
 EPISODES = 8000000
 # 환경 생성
 env_name = "BreakoutDeterministic-v4"
@@ -387,17 +426,29 @@ def preprocess_dataset(source_path, target_path, threshold, num_workers=None):
 
 # input : original image
 def evaluate_aesthetics_score(images):
-
-    scores = np.zeros(shape=(len(images),))
-    features = []
-    for i in range(len(images)):
-        img = images[i].astype(np.float32)/255
-        img_resize = transform.resize(img, (227, 227))-0.5
-        img_resize = np.expand_dims(img_resize, axis=0)
-        score  , feature = vfn_sess.run([ score_func ], feed_dict={image_placeholder: img_resize})[0]
-        scores[i] = score
-        features.append( feature)
-    return scores , features
+    global vfn_sess, a3c_graph
+    with a3c_graph.as_default():
+        # If a single image is passed as a numpy array, wrap it in a list
+        if isinstance(images, np.ndarray) and images.ndim == 3:
+            images = [images]
+            
+        scores = np.zeros(len(images))
+        features = []
+        for i, img in enumerate(images):
+            # img_resize = transform.resize(img, (227, 227), mode='constant')
+            img_resize = img.astype(np.float32)/255
+            img_resize = transform.resize(img_resize, (227, 227))-0.5
+            img_resize = np.expand_dims(img_resize, axis=0)
+            
+            # Ensure session is valid
+            if vfn_sess is None:
+                logger.error("vfn_sess is None in evaluate_aesthetics_score")
+                return scores, features
+                
+            score, feature = vfn_sess.run([score_func], feed_dict={image_placeholder: img_resize})[0]
+            scores[i] = score
+            features.append(feature)
+        return scores, features
 
 def evaluate_aesthetics_score_resized(images):
 
@@ -420,6 +471,7 @@ def evaluate_aesthetics_score_resized(images):
 class A3CAgent:
     def __init__(self, action_size):
         global a3c_graph
+        a3c_graph = tf.get_default_graph()
         # 상태크기와 행동크기를 갖고옴
         self.state_size = config.STATE_SIZE
         self.action_size = action_size
@@ -445,8 +497,14 @@ class A3CAgent:
 
         logger.debug('Parent default graph: %s', tf.get_default_graph())
 
-        self.sess = tf.InteractiveSession()
-        K.set_session(self.sess)
+        if tf.get_default_session() is not None:
+             tf.get_default_session().close()
+
+        config_tf = tf.ConfigProto()
+        config_tf.gpu_options.allow_growth = True
+        self.sess = tf.InteractiveSession(config=config_tf)
+        if hasattr(K, 'set_session'):
+            K.set_session(self.sess)
         self.sess.run(tf.global_variables_initializer())
         #self.load_model("../save_model/A2RL_a3c_run-20181112124128") 
         #self.load_model("../save_model/A2RL_a3c_run-20181112221820") 
@@ -468,15 +526,29 @@ class A3CAgent:
             except OSError as e:
                 logger.error("Failed to create summary directory %s: %s", summary_dir, e)
                 
-        self.summary_writer = \
-            tf.summary.FileWriter(summary_dir, self.sess.graph)
-        #tf.summary.FileWriter(logdir, self.sess.graph)
+        try:
+            # Create the FileWriter
+            self.summary_writer = tf.summary.FileWriter(summary_dir, self.sess.graph)
+            
+            # 1. Force file creation by adding a dummy system summary
+            dummy_summary = tf.Summary(value=[tf.Summary.Value(tag='System/Status', simple_value=1.0)])
+            self.summary_writer.add_summary(dummy_summary, 0)
+            
+            # 2. Flush to force write to OS buffer
+            self.summary_writer.flush()
+            
+            logger.info("Summary writer initialized, dummy summary added, and flushed at: %s", summary_dir)
+        except Exception as e:
+            logger.error("Failed to initialize summary writer: %s", e, exc_info=True)
 
 
 
 
     # 쓰레드를 만들어 학습을 하는 함수
     def train(self, train_path=None, start_fold=0, start_epoch=0):
+        self.start_time = time.time()
+        logger.info('Training started at: %s', datetime.fromtimestamp(self.start_time).strftime('%Y-%m-%d %H:%M:%S'))
+        
         if train_path is None:
             train_path = config.TRAIN_PATH
             
@@ -534,7 +606,9 @@ class A3CAgent:
                 for agent in agents:
                     agent.join()
                 
-                logger.info('Fold {} completed.'.format(fold_idx + 1))
+                elapsed = time.time() - self.start_time
+                logger.info('Fold {} completed. Total elapsed time: {:.2f}s ({:.2f}m)'.format(
+                    fold_idx + 1, elapsed, elapsed / 60.0))
                 
                 # Reset start_epoch for subsequent folds
                 start_epoch = 0
@@ -558,6 +632,7 @@ class A3CAgent:
                             self.optimizer, self.discount_factor,
                              [self.summary_op, self.summary_placeholders,
                               self.update_ops, self.summary_writer],
+                             train_path=train_path,
                              start_epoch=start_epoch,
                              thread_id=i)
                        for i in range(self.threads)]
@@ -567,38 +642,60 @@ class A3CAgent:
                 time.sleep(1)
                 agent.start()
             
-            # Start periodic save loop for standard mode
-            self._periodic_save_loop()
+            # Start periodic save loop thread if not already running
+            if not hasattr(self, 'save_thread') or not self.save_thread.is_alive():
+                self.save_thread = threading.Thread(target=self._periodic_save_loop)
+                self.save_thread.daemon = True
+                self.save_thread.start()
+                logger.info('Started periodic save thread.')
+
+            # Wait for agents to finish
+            for agent in agents:
+                agent.join()
 
     def _periodic_save_loop(self):
         """
-        Periodic model saving loop. Runs in a separate thread for K-fold or 
-        main thread for standard mode (blocking until interrupt).
+        Periodic model saving loop. Runs in a separate thread.
+        Uses graph and session pinning to ensure thread safety in TF1/Keras.
         """
+        logdir = None # Initialize logdir for scope
         while True:
-            time.sleep(60 * 10) # 10 minutes
+            time.sleep(60 * config.SAVE_INTERVAL_MINUTES)
+            try:
+                with a3c_graph.as_default():
+                    with self.sess.as_default():
+                        now = datetime.now().strftime("%Y%m%d%H%M%S")
+                        logger.info('Periodic model save initiated: %s', now)
+                        root_logdir = config.SAVE_MODEL_DIR
+                        logdir = "{}/A2RL_a3c_periodic_{}".format(root_logdir, now)
+                        
+                        metadata = {
+                            'fold': 0,
+                            'epoch': 0,
+                            'episode': episode,
+                            'status': 'periodic'
+                        }
+                        self.save_model(logdir, metadata=metadata)
+                        
+                        # Explicitly flush summaries to ensure they are written to disk
+                        if hasattr(self, 'summary_writer'):
+                            self.summary_writer.flush()
+                            logger.info('TensorBoard summaries flushed to disk.')
+                            
+                        logger.info('Periodic model saved successfully: %s', logdir)
+            except Exception as e:
+                logger.error("Error in periodic save thread: %s", str(e), exc_info=True)
             
-            # Use simpler time format for subfolder, as Date/StartTime is already in root_logdir
-            time_str = datetime.now().strftime("%H%M%S")
-            logger.info('Periodic model save time: %s', time_str)
-            root_logdir = config.SAVE_MODEL_DIR
-            logdir = "{}/checkpoint_{}".format(root_logdir, time_str)
-            
-            # Since we don't know the exact fold/epoch in this thread easily (it's globalish),
-            # we just save the current episode.
-            metadata = {
-                'fold': 0, # Could be improved by making fold/epoch global or class member
-                'epoch': 0,
-                'episode': episode
-            }
-            self.save_model(logdir, metadata=metadata)
-            logger.info('Periodic model saved successfully: %s', logdir)
 
     # 정책신경망과 가치신경망을 생성
     def build_model(self):
 
         logger.debug('Parent Model default graph: %s', tf.get_default_graph())
-        K.set_learning_phase(1)  # set learning phase
+        if hasattr(K, 'set_learning_phase'):
+            try:
+                K.set_learning_phase(1)  # set learning phase
+            except Exception:
+                pass
 
         input = Input(shape = self.state_size )
 
@@ -621,8 +718,10 @@ class A3CAgent:
         critic = Model(inputs=input, outputs=value)
 
         # 가치와 정책을 예측하는 함수를 만들어냄
-        actor._make_predict_function()
-        critic._make_predict_function()
+        if hasattr(actor, '_make_predict_function'):
+            actor._make_predict_function()
+        if hasattr(critic, '_make_predict_function'):
+            critic._make_predict_function()
 
         # actor.summary()
         # critic.summary()
@@ -633,48 +732,61 @@ class A3CAgent:
 
     # 정책신경망을 업데이트하는 함수
     def actor_optimizer(self):
-        action = K.placeholder(shape=[None, self.action_size])
-        advantages = K.placeholder(shape=[None, ])
+        try:
+            action = K.placeholder(shape=[None, self.action_size])
+            advantages = K.placeholder(shape=[None, ])
+        except AttributeError:
+            action = tf.placeholder(dtype=global_dtype, shape=[None, self.action_size])
+            advantages = tf.placeholder(dtype=global_dtype, shape=[None, ])
 
         policy = self.actor.output
 
-        # 정책 크로스 엔트로피 오류함수
+        # Note: K.* ops are preferred over tf.* ops when dealing with KerasTensors
+        # as they handle the internal bridging (KerasTensor -> Tensor) better.
         action_prob = K.sum(action * policy, axis=1)
         cross_entropy = K.log(action_prob + 1e-10) * advantages
         
         if config.ENABLE_MINI_BATCH:
-            cross_entropy = -K.mean(cross_entropy) # Mean for Mini-Batch to prevent explosion
+            cross_entropy = -K.mean(cross_entropy)
         else:
-            cross_entropy = -K.sum(cross_entropy)  # Sum for Standard A3C
+            cross_entropy = -K.sum(cross_entropy)
 
-        # 탐색을 지속적으로 하기 위한 엔트로피 오류
         entropy = K.sum(policy * K.log(policy + 1e-10), axis=1)
         
         if config.ENABLE_MINI_BATCH:
-            entropy = K.mean(entropy) # Mean for Mini-Batch
+            entropy = K.mean(entropy)
         else:
-            entropy = K.sum(entropy)  # Sum for Standard A3C
+            entropy = K.sum(entropy)
 
         # 두 오류함수를 더해 최종 오류함수를 만듬
         loss = cross_entropy + self.beta * entropy   # beta is 0.05
 
-        optimizer = RMSprop(lr=self.actor_lr, rho=0.99, epsilon=0.01)
+        # Use dynamic learning rate argument name for compatibility
+        opt_kwargs = {'rho': 0.99, 'epsilon': 0.01}
+        opt_kwargs[K_LR_NAME] = self.actor_lr
+        optimizer = RMSprop(**opt_kwargs)
         
-        updates = optimizer.get_updates(self.actor.trainable_weights, [], loss)
+        updates = optimizer.get_updates(loss, self.actor.trainable_weights)
         train = K.function([self.actor.input, action, advantages], [loss], updates=updates)
         return train
 
     # 가치신경망을 업데이트하는 함수
     def critic_optimizer(self):
-        discounted_prediction = K.placeholder(shape=(None,))
+        try:
+            discounted_prediction = K.placeholder(shape=(None,))
+        except AttributeError:
+            discounted_prediction = tf.placeholder(dtype=global_dtype, shape=(None,))
 
         value = self.critic.output
 
         # [반환값 - 가치]의 제곱을 오류함수로 함
         loss = K.mean(K.square(discounted_prediction - value))
 
-        optimizer = RMSprop(lr=self.critic_lr, rho=0.99, epsilon=0.01)
-        updates = optimizer.get_updates(self.critic.trainable_weights, [],loss)
+        # Use dynamic learning rate argument name for compatibility
+        opt_kwargs = {'rho': 0.99, 'epsilon': 0.01}
+        opt_kwargs[K_LR_NAME] = self.critic_lr
+        optimizer = RMSprop(**opt_kwargs)
+        updates = optimizer.get_updates(loss, self.critic.trainable_weights)
         train = K.function([self.critic.input, discounted_prediction],
                            [loss], updates=updates)
         return train
@@ -741,48 +853,47 @@ class A3CAgent:
                     "\n" + "="*60)
 
     def save_model(self, name, metadata=None):
-        # Ensure the directory exists (important for date-based directories)
-        dir_name = os.path.dirname(name)
-        if dir_name and not os.path.exists(dir_name):
-            try:
-                os.makedirs(dir_name)
-                logger.info("Created model save directory: %s", dir_name)
-            except OSError as e:
-                logger.error("Failed to create directory %s: %s", dir_name, e)
-
-        logger.info('Saving model to: %s', name)
-        self.actor.save_weights(name + "_actor.h5")
-        self.critic.save_weights(name + "_critic.h5")
+        with a3c_graph.as_default():
+            with self.sess.as_default():
+                # Ensure the directory exists (important for date-based directories)
+                dir_name = os.path.dirname(name)
+                if dir_name and not os.path.exists(dir_name):
+                    try:
+                        os.makedirs(dir_name)
+                        logger.info("Created model save directory: %s", dir_name)
+                    except OSError as e:
+                        logger.error("Failed to create directory %s: %s", dir_name, e)
         
-        if metadata:
-            metadata_path = name + "_metadata.json"
-            try:
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=4)
-                logger.info('Saved metadata to: %s', metadata_path)
-            except Exception as e:
-                logger.error('Failed to save metadata: %s', e)
+                logger.info('Saving model to: %s', name)
+                try:
+                    self.actor.save_weights(name + "_actor.h5")
+                    logger.debug('Saved actor weights.')
+                    self.critic.save_weights(name + "_critic.h5")
+                    logger.debug('Saved critic weights.')
+                except Exception as e:
+                    logger.error('Failed to save model weights: %s', e, exc_info=True)
+                
+                if metadata:
+                    metadata_path = name + "_metadata.json"
+                    try:
+                        with open(metadata_path, 'w') as f:
+                            json.dump(metadata, f, indent=4)
+                        logger.info('Saved metadata to: %s', metadata_path)
+                    except Exception as e:
+                        logger.error('Failed to save metadata: %s', e)
+                
+                # Ensure summaries are flushed whenever model is saved
+                if hasattr(self, 'summary_writer'):
+                    self.summary_writer.flush()
 
     # 각 에피소드 당 학습 정보를 기록
     def setup_summary(self):
-        episode_total_reward = tf.Variable(0.)
-        episode_avg_max_q = tf.Variable(0.)
-        episode_duration = tf.Variable(0.)
-
-        tf.summary.scalar('Total Reward/Episode', episode_total_reward)
-        tf.summary.scalar('Average Max Prob/Episode', episode_avg_max_q)
-        tf.summary.scalar('Duration/Episode', episode_duration)
-
-        summary_vars = [episode_total_reward,
-                        episode_avg_max_q,
-                        episode_duration]
-
-        summary_placeholders = [tf.placeholder(tf.float32)
-                                for _ in range(len(summary_vars))]
-        update_ops = [summary_vars[i].assign(summary_placeholders[i])
-                      for i in range(len(summary_vars))]
-        summary_op = tf.summary.merge_all()
-        return summary_placeholders, update_ops, summary_op
+        """
+        Setup summary placeholders and ops. 
+        Note: We now use manual summary creation in Agent._process_single_image 
+        for better thread safety and reliability in TF1.
+        """
+        return [], [], None
 
 
 # 액터러너 클래스(쓰레드)
@@ -945,10 +1056,14 @@ class Agent(threading.Thread):
             image: Image array to process
             filename: Optional filename for logging
         """
-        global episode
+        global episode, episode_lock
         
         step = 0
         self.t = 0
+        
+        current_episode = 0
+        with episode_lock:
+            current_episode = episode
         
         scores, features = evaluate_aesthetics_score([image])
         if filename:
@@ -1147,7 +1262,7 @@ class Agent(threading.Thread):
             
             if done:
                 # Record episode statistics
-                episode += 1
+                # (episode increment handled below with lock)
                 
                 # Log episode action history
                 action_history_str = ' -> '.join(['{}({})'.format(a, get_action_name(a)) for a in self.episode_action_history])
@@ -1184,6 +1299,13 @@ class Agent(threading.Thread):
                         cum_lines.append("="*60)
                         logger.info("\n" + "\n".join(cum_lines))
                 
+                # Synchronize episode counter and handle summary writing
+                if terminals[0] == 1 or step >= self.T_max:
+                    # 에피소드 종료시 글로벌 에피소드 카운트를 Thread-Safe하게 증가
+                    with episode_lock:
+                        episode += 1
+                        current_episode = episode # Synchronize current_episode with the globally updated episode
+                
                 # Print error statistics periodically
                 if episode % 100 == 0:
                     total_processed = self.total_images_processed + self.total_images_failed
@@ -1196,13 +1318,21 @@ class Agent(threading.Thread):
                                    "\n  Success rate: {:.2f}%".format(success_rate) +
                                    "\n" + "="*60)
                 
-                stats = [score, self.avg_p_max / float(step), step]
-                for i in range(len(stats)):
-                    self.sess.run(self.update_ops[i], feed_dict={
-                        self.summary_placeholders[i]: float(stats[i])
-                    })
-                summary_str = self.sess.run(self.summary_op)
-                self.summary_writer.add_summary(summary_str, episode + 1)
+                # Manual summary creation for better reliability in Colab/Multi-threading
+                # This bypasses session.run for summaries, avoiding graph/session pinning issues.
+                if step > 0:
+                    summary = tf.Summary()
+                    summary.value.add(tag='Total Reward/Episode', simple_value=float(score))
+                    summary.value.add(tag='Average Max Prob/Episode', simple_value=float(self.avg_p_max / float(step)))
+                    summary.value.add(tag='Duration/Episode', simple_value=float(step))
+                    
+                    with episode_lock:
+                        current_episode = episode
+                    
+                    self.summary_writer.add_summary(summary, current_episode + 1)
+                    self.summary_writer.flush()
+                else:
+                    logger.warning("Thread %d - Episode finished with 0 steps, skipping summary.", self.thread_id)
                 self.avg_p_max = 0
                 self.avg_loss = 0
                 step = 0
@@ -1221,6 +1351,7 @@ class Agent(threading.Thread):
         global episode, global_dtype, a3c_graph
         
         for batch_idx in range(num_batches):
+            batch_start = time.time()
             if num_batches > 1:
                 logger.info('=== Batch %d/%d ===', batch_idx + 1, num_batches)
             
@@ -1232,6 +1363,9 @@ class Agent(threading.Thread):
             for j in range(len(images)):
                 filename = images_filename[j] if verbose else None
                 self._process_single_image(images[j], filename)
+            
+            batch_duration = time.time() - batch_start
+            logger.info('Batch %d/%d completed in %.2f seconds', batch_idx + 1, num_batches, batch_duration)
 
     def validate_episode(self, TrainPath, file_list, verbose=True):
         """
@@ -1396,6 +1530,19 @@ class Agent(threading.Thread):
         return report
 
     def run(self):
+        with a3c_graph.as_default():
+            with self.sess.as_default():
+                if hasattr(K, 'set_session'):
+                    try:
+                        K.set_session(self.sess)
+                    except Exception: pass
+                try:
+                    self._run()
+                except Exception as e:
+                    logger.error("Error in thread {}: {}".format(self.thread_id, str(e)), exc_info=True)
+
+    def _run(self):
+        # Original run logic moved to _run to keep the wrapper clean
         global episode
         global global_dtype
         global a3c_graph
@@ -1476,38 +1623,36 @@ class Agent(threading.Thread):
             if not hasattr(self, 'mini_batch_buffer'):
                 self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
             
-            # Append current chunk's data to buffer
-            self.mini_batch_buffer['inputs'].append(states) # Use the processed 'states'
-            self.mini_batch_buffer['actions'].append(np.vstack(self.actions))
-            self.mini_batch_buffer['advantages'].append(advantages)
-            self.mini_batch_buffer['targets'].append(discounted_prediction)
-            
-            # Check if we have enough data (count number of chunks or total steps?)
-            # Let's count total steps accumulated
-            total_steps = sum(len(a) for a in self.mini_batch_buffer['advantages'])
-            
-            # A single chunk is usually 10 steps. MINI_BATCH_SIZE is e.g. 32.
-            # If MINI_BATCH_SIZE means "Number of chunks/updates to accumulate" (e.g. 32 updates):
-            # Then we check len(self.mini_batch_buffer['advantages']) >= config.MINI_BATCH_SIZE.
-            # If it means "Total samples" (e.g. 32 samples):
-            # That's too small (current batch is 10).
-            # Assuming config.MINI_BATCH_SIZE (32) means "32 Chunks" (320 samples) for stability.
-            
-            if len(self.mini_batch_buffer['advantages']) >= config.MINI_BATCH_SIZE:
-                # Concatenate all buffered data
-                batch_inputs = np.concatenate(self.mini_batch_buffer['inputs'], axis=0)
-                batch_actions = np.concatenate(self.mini_batch_buffer['actions'], axis=0)
-                batch_advantages = np.concatenate(self.mini_batch_buffer['advantages'], axis=0)
-                batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
+            try:
+                # Append current chunk's data to buffer
+                self.mini_batch_buffer['inputs'].append(states) # Use the processed 'states'
+                self.mini_batch_buffer['actions'].append(np.vstack(self.actions))
+                self.mini_batch_buffer['advantages'].append(advantages)
+                self.mini_batch_buffer['targets'].append(discounted_prediction)
                 
-                # Perform ONE large update
-                self.optimizer[0]([batch_inputs, batch_actions, batch_advantages])
-                self.optimizer[1]([batch_inputs, batch_targets])
-                
-                self.avg_loss += 0 # Loss calculation complex with function approach, skipping for perf
-                
-                # Clear buffer
+                # Check if we have enough data (chunks)
+                # A single chunk is usually 10 steps. MINI_BATCH_SIZE is e.g. 32.
+                # Assuming config.MINI_BATCH_SIZE (32) means "32 Chunks" (320 samples) for stability.
+                if len(self.mini_batch_buffer['advantages']) >= config.MINI_BATCH_SIZE:
+                    # Concatenate all buffered data
+                    batch_inputs = np.concatenate(self.mini_batch_buffer['inputs'], axis=0)
+                    batch_actions = np.concatenate(self.mini_batch_buffer['actions'], axis=0)
+                    batch_advantages = np.concatenate(self.mini_batch_buffer['advantages'], axis=0)
+                    batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
+                    
+                    # Perform ONE large update
+                    self.optimizer[0]([batch_inputs, batch_actions, batch_advantages])
+                    self.optimizer[1]([batch_inputs, batch_targets])
+                    
+                    self.avg_loss += 0 # Loss calculation complex with function approach, skipping for perf
+                    
+                    # Clear buffer immediately after training to free memory
+                    self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
+            except Exception as e:
+                logger.error("Error during mini-batch training: {}".format(str(e)))
+                # Clear buffer on error to prevent corrupted state and memory growth
                 self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
+                raise e
         else:
             # Standard immediate update
             self.optimizer[0]([states, np.vstack(self.actions), advantages]) # Use processed 'states' and vstacked actions
@@ -1519,9 +1664,10 @@ class Agent(threading.Thread):
 
     # 로컬신경망을 생성하는 함수
     def build_local_model(self):
-
         logger.debug('Child build_local_model graph: %s', tf.get_default_graph())
-        K.set_learning_phase(1)  # set learning phase
+        with a3c_graph.as_default():
+            with self.sess.as_default():
+                K.set_learning_phase(1)  # set learning phase
 
         input = Input(shape=self.state_size)
 
@@ -1591,7 +1737,10 @@ class Agent(threading.Thread):
         # 이미 정규화 in evaluate_aesthetics_score
         #history = np.float32(history / 255.)
         logger.debug('Getting action...')
-        policy = self.local_actor.predict(history)[0]
+        with a3c_graph.as_default():
+            with self.sess.as_default():
+                # predict_on_batch is more thread-safe and direct than predict()
+                policy = self.local_actor.predict_on_batch(history)[0]
 
         logger.debug('Action policy predicted.')
         action_index = np.random.choice(self.action_size, 1, p=policy)[0]
@@ -1614,6 +1763,7 @@ def pre_processing(next_observe, observe):
     return processed_observe
 
 if __name__ == "__main__":
+    script_start_time = time.time()
     parser = argparse.ArgumentParser(description='A2RL Training')
     parser.add_argument('--resume', type=str, help='Path to model snapshot for resumption (including metadata, fold, epoch)')
     parser.add_argument('--load_weights', type=str, help='Path to model weights to load as initial values (metadata ignored)')
@@ -1629,7 +1779,7 @@ if __name__ == "__main__":
     tf.reset_default_graph()
     embedding_dim = config.EMBEDDING_DIM
     ranking_loss = config.RANKING_LOSS
-    net_data = np.load(config.ALEXNET_NPY, encoding='bytes').item()
+    net_data = np.load(config.ALEXNET_NPY, encoding='bytes', allow_pickle=True).item()
     image_placeholder = tf.placeholder(dtype=global_dtype, shape=[batch_size, 227, 227, 3])
     var_dict = nw.get_variable_dict(net_data)
     SPP = config.SPP
@@ -1747,5 +1897,19 @@ if __name__ == "__main__":
         if 'vfn_sess' in locals() and vfn_sess:
             logger.info("Closing VFN session...")
             vfn_sess.close()
+
+    total_elapsed = time.time() - script_start_time
+    # Calculate total epochs
+    if config.USE_K_FOLD:
+        total_epochs = config.K_FOLDS * config.EPOCH_SIZE
+    else:
+        total_epochs = config.EPOCH_SIZE
+        
+    logger.info("="*60)
+    logger.info("TRAINING COMPLETED")
+    logger.info("Total Executed Epochs: %d", total_epochs)
+    logger.info("Total Executed Episodes: %d", episode)
+    logger.info("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
+    logger.info("="*60)
 
 
