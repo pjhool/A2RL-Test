@@ -2,3 +2,4 @@ scikit-image
 opencv-python
 numpy
 tensorflow-gpu>=2.0 # Colab uses 2.x by default, script handles compat
+tf_keras==2.19 
