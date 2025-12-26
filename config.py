@@ -43,7 +43,7 @@ MIN_STEPS = 5      # Encourage at least 5 steps before STOP
 BATCH_SIZE = 32
 TRAIN_SIZE = 100
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE  # 3
-EPOCH_SIZE = 1000
+EPOCH_SIZE = 1
 INITIAL_SCORE_THRESHOLD = 10.0
 PREPROCESS_BATCH_SIZE = 64
 PREPROCESS_WORKERS = 6 # Number of worker processes for parallel preprocessing
@@ -84,3 +84,6 @@ FEATURE_EPSILON = 1e-8  # Small value to prevent division by zero
 # --- Mini-Batch Training Settings ---
 ENABLE_MINI_BATCH = True
 MINI_BATCH_SIZE = 32 # Accumulate gradients over 32 steps/updates before applying
+
+# --- Save Settings ---
+SAVE_INTERVAL_MINUTES = 10
