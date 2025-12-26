@@ -13,13 +13,14 @@ time_str = now.strftime('%H%M%S')
 # Assuming Google Drive is mounted at /content/drive
 DRIVE_ROOT = '/content/drive/MyDrive/A2RL/A2RL-Test'
 DATA_ROOT = '/content/drive/MyDrive/A2RL/data'  # Or wherever data is
+LOG_SUMMARY_ROOT = '/content'  # Or wherever data is
 
 TRAIN_PATH = DATA_ROOT # Update this if data is elsewhere
       
 MODEL_SNAPSHOT = DRIVE_ROOT + '/a2rl_model/model-spp-max'
 SAVE_MODEL_DIR = os.path.join(DRIVE_ROOT, 'save_model', date_str)
-SUMMARY_DIR = os.path.join(DRIVE_ROOT, 'summary', 'A2RL_a3c', date_str)
-LOG_DIR = os.path.join(DRIVE_ROOT, 'logs', date_str)
+SUMMARY_DIR = os.path.join(LOG_SUMMARY_ROOT, 'summary', 'A2RL_a3c', date_str)
+LOG_DIR = os.path.join(LOG_SUMMARY_ROOT, 'logs', date_str)
 ALEXNET_NPY = DRIVE_ROOT + '/alexnet.npy'
 
 # --- A3C Hyperparameters ---
@@ -28,7 +29,7 @@ CRITIC_LR = 1.0e-4
 DISCOUNT_FACTOR = 0.99
 BETA = 0.05
 
-THREADS = 4  # Colab usually gives 2 cores, so 2-4 threads is appropriate
+THREADS = 2  # Colab usually gives 2 cores, so 2-4 threads is appropriate
 
 # --- RL Agent Parameters ---
 T_MAX = 50          # Maximum steps per episode
@@ -38,7 +39,9 @@ MIN_STEPS = 5      # Encourage at least 5 steps before STOP
 BATCH_SIZE = 32
 TRAIN_SIZE = 100
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE
-EPOCH_SIZE = 1000
+
+EPOCH_SIZE = 100
+
 INITIAL_SCORE_THRESHOLD = 10.0
 PREPROCESS_BATCH_SIZE = 64
 PREPROCESS_WORKERS = 2 # Reduced for Colab
@@ -46,7 +49,8 @@ FILTERED_TRAIN_PATH = DATA_ROOT + '/Filtered_Train'
 USE_FILTERED_DATA = True 
 
 # --- K-fold Cross-Validation Settings ---
-USE_K_FOLD = True
+#USE_K_FOLD = True
+USE_K_FOLD = False
 K_FOLDS = 5
 VALIDATION_FREQ = 1 
 
@@ -77,3 +81,6 @@ FEATURE_EPSILON = 1e-8
 # --- Mini-Batch Training Settings ---
 ENABLE_MINI_BATCH = True
 MINI_BATCH_SIZE = 32 # Accumulate gradients over 32 steps/updates before applying
+
+# --- Save Settings ---
+SAVE_INTERVAL_MINUTES = 10
