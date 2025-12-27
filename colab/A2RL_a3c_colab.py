@@ -1,15 +1,47 @@
-print("DEBUG: VERSION 20251226_03 - Using manual set_learning_phase check")
 import sys
 import os
 
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
-
-import logging
+# Suppress warnings in Kaggle environment
 try:
     import colab.config_colab as config
 except ImportError:
     import config_colab as config
+
+if config.IS_KAGGLE:
+    # Suppress TensorFlow warnings
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF C++ warnings
+    os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Disable CUDA warnings if no GPU
+    
+    # Suppress Python warnings
+    import warnings
+    warnings.filterwarnings('ignore', category=DeprecationWarning)
+    warnings.filterwarnings('ignore', category=UserWarning)
+    warnings.filterwarnings('ignore', category=FutureWarning)
+    warnings.filterwarnings('ignore', message='.*set_learning_phase.*')
+    warnings.filterwarnings('ignore', message='.*state_updates.*')
+    warnings.filterwarnings('ignore', message='.*Conversion of an array.*')
+else:
+    # Print debug info only in non-Kaggle environments
+    print("DEBUG: VERSION 20251226_03 - Using manual set_learning_phase check")
+
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+
+# Additional TensorFlow logging suppression for Kaggle
+if config.IS_KAGGLE:
+    # Suppress TensorFlow logging
+    tf.logging.set_verbosity(tf.logging.ERROR)
+    
+    # Suppress absl logging (for XLA, cuDNN, etc.)
+    try:
+        import absl.logging
+        absl.logging.set_verbosity('error')
+        absl.logging.set_stderrthreshold('error')
+    except (ImportError, AttributeError):
+        pass
+
+import logging
+
 
 from logger_config import setup_logger
 
@@ -26,7 +58,8 @@ try:
     except ImportError:
         from tf_keras.optimizers import RMSprop
     USING_TF_KERAS = True
-    print("DEBUG: Using tf_keras (Legacy Keras)")
+    if not config.IS_KAGGLE:  # Only print in non-Kaggle environments
+        print("DEBUG: Using tf_keras (Legacy Keras)")
 except ImportError:
     from tensorflow.keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D
     from tensorflow.keras import backend as K
@@ -36,7 +69,8 @@ except ImportError:
     except ImportError:
         from tensorflow.keras.optimizers import RMSprop
     USING_TF_KERAS = False
-    print("DEBUG: Using tensorflow.keras (Keras 3)")
+    if not config.IS_KAGGLE:  # Only print in non-Kaggle environments
+        print("DEBUG: Using tensorflow.keras (Keras 3)")
 
 # Determine which argument to use for learning rate
 # Older Keras uses 'lr', newer Keras uses 'learning_rate'
@@ -51,7 +85,8 @@ except (AttributeError, ValueError, NameError):
     # Fallback for very old Python or Keras versions
     K_LR_NAME = 'lr'
 
-print("DEBUG: Optimizer LR arg: {}".format(K_LR_NAME))
+if not config.IS_KAGGLE:  # Only print in non-Kaggle environments
+    print("DEBUG: Optimizer LR arg: {}".format(K_LR_NAME))
 import numpy as np
 import threading
 import random
@@ -1315,7 +1350,7 @@ class Agent(threading.Thread):
                 is_valid, asratio, penalty = validate_aspect_ratio(bbox)
                 
                 if not is_valid:
-                    logger.warning('Invalid aspect ratio: %.2f (penalty: %.1f)', asratio, penalty)
+                    logger.debug('Invalid aspect ratio: %.2f (penalty: %.1f)', asratio, penalty)
                     reward = reward - penalty
                 else:
                     logger.debug('Valid aspect ratio: %.2f', asratio)
