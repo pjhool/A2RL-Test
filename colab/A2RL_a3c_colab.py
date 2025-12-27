@@ -103,7 +103,13 @@ env_name = "BreakoutDeterministic-v4"
 drop_ratio = 0.5
 
 # Initialize logger
-logger = setup_logger('A2RL', log_dir=config.LOG_DIR, level=logging.DEBUG, console_level=logging.INFO)
+# Adjust console logging level based on environment
+if config.IS_KAGGLE:
+    console_level = logging.WARNING  # Reduce console output in Kaggle
+else:
+    console_level = logging.INFO
+
+logger = setup_logger('A2RL', log_dir=config.LOG_DIR, level=logging.DEBUG, console_level=console_level)
 
 # Feature Scaling Helper Functions
 def load_feature_stats(stats_path):
@@ -393,7 +399,7 @@ def preprocess_dataset(source_path, target_path, threshold, num_workers=None):
                 batch_images = []
                 batch_filenames = []
                 
-            if (i + 1) % 100 == 0:
+            if (i + 1) % config.LOG_INTERVAL_PREPROCESSING == 0:
                 logger.info("Checked %d/%d images... (Passed CPU filters: %d, Kept: %d)", 
                             i + 1, total, count + len(batch_images), count)
                             
@@ -1103,7 +1109,8 @@ class Agent(threading.Thread):
         images_filename = []
         
         for i, x in enumerate(trainfiles_batch_fullname):
-            if i % 10 == 0 or i == len(trainfiles_batch_fullname) - 1:
+            # Reduce logging frequency in Kaggle
+            if i % config.LOG_INTERVAL_IMAGE_LOADING == 0 or i == len(trainfiles_batch_fullname) - 1:
                 logger.info('Thread %d - Loading image %d/%d...', self.thread_id, i + 1, len(trainfiles_batch_fullname))
             
             img, error = load_and_validate_image(x)
@@ -1118,7 +1125,7 @@ class Agent(threading.Thread):
             images_filename.append(x)
             self.total_images_processed += 1
         
-        logger.info('Loaded %d valid images', len(images))
+        logger.debug('Loaded %d valid images', len(images))
         return images, images_filename
 
     def _process_single_image(self, image, filename=None):
@@ -1142,9 +1149,9 @@ class Agent(threading.Thread):
         scores, features = evaluate_aesthetics_score([image])
         logger.debug("Thread %d - Evaluation completed (Score: %.4f)", self.thread_id, scores[0])
         if filename:
-            logger.info('Aesthetic scores evaluation for %s: %s', filename, scores)
+            logger.debug('Aesthetic scores evaluation for %s: %s', filename, scores)
         else:
-            logger.info('Aesthetic scores evaluation: %s', scores)
+            logger.debug('Aesthetic scores evaluation: %s', scores)
         
         logger.debug('Feature shape: %s', features[0].shape)
         
@@ -1160,7 +1167,7 @@ class Agent(threading.Thread):
         
         # Filter out images with already high initial scores
         if hasattr(config, 'INITIAL_SCORE_THRESHOLD') and global_score >= config.INITIAL_SCORE_THRESHOLD:
-            logger.info('Skipping image %s: Initial score %.4f exceeds threshold %.4f', 
+            logger.debug('Skipping image %s: Initial score %.4f exceeds threshold %.4f', 
                         filename, global_score, config.INITIAL_SCORE_THRESHOLD)
             return
         
@@ -1193,8 +1200,8 @@ class Agent(threading.Thread):
                     epsilon=self.feature_epsilon
                 )
                 
-                # Log scaling effect on first step or periodically
-                if step == 0 or (episode % 10 == 0 and step < 3):
+                # Log scaling effect on first step or periodically (reduced frequency for Kaggle)
+                if step == 0 or (episode % config.LOG_FREQ_DIAGNOSTICS == 0 and step < 3):
                     logger.info("Feature Scaling Applied (Episode %d, Step %d):", episode, step)
                     logger.info("  Method: %s", self.feature_scaling_method)
                     logger.info("  Before - Mean: %.6f, Std: %.6f", 
@@ -1202,8 +1209,8 @@ class Agent(threading.Thread):
                     logger.info("  After  - Mean: %.6f, Std: %.6f", 
                                np.mean(observe), np.std(observe))
             
-            # Feature scale diagnostics
-            if step == 0 or (episode % 10 == 0 and step < 3):  # First step or first 3 steps every 10 episodes
+            # Feature scale diagnostics (reduced frequency for Kaggle)
+            if step == 0 or (episode % config.LOG_FREQ_DIAGNOSTICS == 0 and step < 3):  # First step or first 3 steps every N episodes
                 feature_mean = np.mean(observe)
                 feature_std = np.std(observe)
                 feature_min = np.min(observe)
@@ -1235,8 +1242,8 @@ class Agent(threading.Thread):
             self.action_counts[action] += 1  # Cumulative count
             self.episode_action_counts[action] += 1  # Episode count
             
-            # Policy distribution diagnostics
-            if step == 0 or (episode % 10 == 0 and step < 3):
+            # Policy distribution diagnostics (reduced frequency for Kaggle)
+            if step == 0 or (episode % config.LOG_FREQ_DIAGNOSTICS == 0 and step < 3):
                 policy_entropy = -np.sum(policy * np.log(policy + 1e-10))
                 policy_max = np.max(policy)
                 policy_max_idx = np.argmax(policy)
@@ -1253,7 +1260,7 @@ class Agent(threading.Thread):
                 logger.info("  Top 3 Actions: %s", top3_str)
             
             action_name = get_action_name(action)
-            logger.info('Step %d - Action: %d (%s), Policy sum: %.4f', step, action, action_name, np.sum(policy))
+            logger.debug('Step %d - Action: %d (%s), Policy sum: %.4f', step, action, action_name, np.sum(policy))
             logger.debug('Policy: %s', policy)
             
             if action == 13:
@@ -1285,7 +1292,7 @@ class Agent(threading.Thread):
             # Score, Feature of newly Cropped image
             new_scores, new_features = evaluate_aesthetics_score_resized(img)
             
-            logger.info('New scores: %s', new_scores)
+            logger.debug('New scores: %s', new_scores)
             
             # Calculate reward
             score_diff = new_scores[0] - local_score
@@ -1313,7 +1320,7 @@ class Agent(threading.Thread):
                 else:
                     logger.debug('Valid aspect ratio: %.2f', asratio)
             
-            logger.info('Reward: %.4f', reward)
+            logger.debug('Reward: %.4f', reward)
             
             # Policy maximum
             self.avg_p_max += np.amax(self.actor.predict(np.float32(history)))
@@ -1339,27 +1346,32 @@ class Agent(threading.Thread):
                 # Record episode statistics
                 # (episode increment handled below with lock)
                 
-                # Log episode action history
-                action_history_str = ' -> '.join(['{}({})'.format(a, get_action_name(a)) for a in self.episode_action_history])
-                logger.info("Thread %d - Episode %d finished - Score: %.4f, Steps: %d, Avg Prob Max: %.4f", 
-                           self.thread_id, episode, score, step, self.avg_p_max / float(step))
-                logger.info("Action History: [%s]", action_history_str)
+                # Log episode action history (reduced in Kaggle)
+                if not config.IS_KAGGLE or episode % 10 == 0:
+                    action_history_str = ' -> '.join(['{}({})'.format(a, get_action_name(a)) for a in self.episode_action_history])
+                    logger.info("Thread %d - Episode %d finished - Score: %.4f, Steps: %d, Avg Prob Max: %.4f", 
+                               self.thread_id, episode, score, step, self.avg_p_max / float(step))
+                    logger.info("Action History: [%s]", action_history_str)
+                else:
+                    logger.info("Thread %d - Episode %d finished - Score: %.4f, Steps: %d, Avg Prob Max: %.4f", 
+                               self.thread_id, episode, score, step, self.avg_p_max / float(step))
                 
-                # Log episode-specific action counts
-                episode_total = np.sum(self.episode_action_counts)
-                if episode_total > 0:
-                    ep_lines = ["Thread {} - Episode {} Action Distribution:".format(self.thread_id, episode)]
-                    for i in range(self.action_size):
-                        count = self.episode_action_counts[i]
-                        if count > 0:  # Only show actions that were used
-                            percentage = 100.0 * count / episode_total
-                            action_name = get_action_name(i)
-                            ep_lines.append("  Action {:2d} ({:15s}): {:2d} times ({:5.1f}%)".format(
-                                i, action_name, count, percentage))
-                    logger.info("\n" + "\n".join(ep_lines))
+                # Log episode-specific action counts (reduced in Kaggle)
+                if not config.IS_KAGGLE or episode % 10 == 0:
+                    episode_total = np.sum(self.episode_action_counts)
+                    if episode_total > 0:
+                        ep_lines = ["Thread {} - Episode {} Action Distribution:".format(self.thread_id, episode)]
+                        for i in range(self.action_size):
+                            count = self.episode_action_counts[i]
+                            if count > 0:  # Only show actions that were used
+                                percentage = 100.0 * count / episode_total
+                                action_name = get_action_name(i)
+                                ep_lines.append("  Action {:2d} ({:15s}): {:2d} times ({:5.1f}%)".format(
+                                    i, action_name, count, percentage))
+                        logger.info("\n" + "\n".join(ep_lines))
                 
-                # Print cumulative action statistics periodically
-                if episode % 10 == 0:
+                # Print cumulative action statistics periodically (reduced frequency for Kaggle)
+                if episode % config.LOG_FREQ_STATS == 0:
                     total_actions = np.sum(self.action_counts)
                     if total_actions > 0:
                         cum_lines = ["="*60,
@@ -1430,10 +1442,10 @@ class Agent(threading.Thread):
                 logger.info('=== Batch %d/%d ===', batch_idx + 1, num_batches)
             
             # Load and validate batch
-            logger.info('Thread %d - Loading batch %d...', self.thread_id, batch_idx + 1)
+            logger.debug('Thread %d - Loading batch %d...', self.thread_id, batch_idx + 1)
             images, images_filename = self._load_and_validate_batch(
                 TrainPath, self.batch_size, use_random_sampling, file_list=file_list)
-            logger.info('Thread %d - Batch %d loaded (images: %d)', self.thread_id, batch_idx + 1, len(images))
+            logger.debug('Thread %d - Batch %d loaded (images: %d)', self.thread_id, batch_idx + 1, len(images))
             
             # Process each image
             for j in range(len(images)):
@@ -1441,7 +1453,8 @@ class Agent(threading.Thread):
                 self._process_single_image(images[j], filename)
             
             batch_duration = time.time() - batch_start
-            logger.info('Batch %d/%d completed in %.2f seconds', batch_idx + 1, num_batches, batch_duration)
+            if not config.IS_KAGGLE or batch_idx % 10 == 0:
+                logger.info('Batch %d/%d completed in %.2f seconds', batch_idx + 1, num_batches, batch_duration)
 
     def validate_episode(self, TrainPath, file_list, verbose=True):
         """

@@ -113,3 +113,20 @@ MINI_BATCH_SIZE = 32 # Accumulate gradients over 32 steps/updates before applyin
 
 # --- Save Settings ---
 SAVE_INTERVAL_MINUTES = 10
+
+# --- Logging Settings ---
+# Frequency for diagnostic logs (feature stats, policy stats, etc.)
+# Kaggle: Log every 100 episodes, Local: Log every 10 episodes
+LOG_FREQ_DIAGNOSTICS = 100 if IS_KAGGLE else 10
+
+# Frequency for cumulative statistics logs
+# Kaggle: Log every 100 episodes, Local: Log every 10 episodes  
+LOG_FREQ_STATS = 100 if IS_KAGGLE else 10
+
+# Image loading progress log interval
+# Kaggle: Log every 50 images, Local: Log every 10 images
+LOG_INTERVAL_IMAGE_LOADING = 50 if IS_KAGGLE else 10
+
+# Preprocessing progress log interval
+# Kaggle: Log every 500 images, Local: Log every 100 images
+LOG_INTERVAL_PREPROCESSING = 500 if IS_KAGGLE else 100
