@@ -58,18 +58,19 @@ CRITIC_LR = 1.0e-4
 DISCOUNT_FACTOR = 0.99
 BETA = 0.05
 
-THREADS = 2  # Colab usually gives 2 cores, so 2-4 threads is appropriate
+# Environment variable support for runtime configuration
+THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Colab usually gives 2 cores
 
 # --- RL Agent Parameters ---
-T_MAX = 50          # Maximum steps per episode
+T_MAX = int(os.environ.get('A2RL_T_MAX', '50'))          # Maximum steps per episode
 UPDATE_FREQ = 10    # Model update frequency (t_max)
 STEP_PENALTY = 0.0
 MIN_STEPS = 5      # Encourage at least 5 steps before STOP
-BATCH_SIZE = 32
+BATCH_SIZE = int(os.environ.get('A2RL_BATCH_SIZE', '32'))
 TRAIN_SIZE = 100
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE
 
-EPOCH_SIZE = 100
+EPOCH_SIZE = int(os.environ.get('A2RL_EPOCH_SIZE', '100'))
 
 INITIAL_SCORE_THRESHOLD = 10.0
 PREPROCESS_BATCH_SIZE = 64
@@ -79,8 +80,8 @@ USE_FILTERED_DATA = True
 
 # --- K-fold Cross-Validation Settings ---
 #USE_K_FOLD = True
-USE_K_FOLD = False
-K_FOLDS = 5
+USE_K_FOLD = bool(int(os.environ.get('A2RL_USE_K_FOLD', '0')))  # 0=False, 1=True
+K_FOLDS = int(os.environ.get('A2RL_K_FOLDS', '5'))
 VALIDATION_FREQ = 1 
 
 # --- Image Validation Settings ---

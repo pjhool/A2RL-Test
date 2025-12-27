@@ -2071,6 +2071,77 @@ if __name__ == "__main__":
         logger.info("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
         logger.info("="*60)
         
+        # ✅ Kaggle: Create summary archive for download
+        if config.IS_KAGGLE:
+            import subprocess
+            from datetime import datetime
+            
+            logger.info('')
+            logger.info('='*60)
+            logger.info('Creating summary archive for Kaggle download...')
+            logger.info('='*60)
+            
+            try:
+                # Determine summary directory
+                summary_base = config.LOG_SUMMARY_ROOT
+                summary_dir = os.path.join(summary_base, 'summary')
+                
+                if os.path.exists(summary_dir):
+                    # Check directory size
+                    try:
+                        result = subprocess.run(['du', '-sh', summary_dir], 
+                                              capture_output=True, text=True, check=True)
+                        dir_size = result.stdout.split()[0]
+                        logger.info('Summary directory size: %s', dir_size)
+                    except Exception:
+                        pass
+                    
+                    # Create timestamped tar.gz file
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    tar_filename = 'summary_{}.tar.gz'.format(timestamp)
+                    tar_path = os.path.join('/kaggle/working', tar_filename)
+                    
+                    logger.info('Compressing summary to: %s', tar_filename)
+                    
+                    # Create tar.gz archive
+                    result = subprocess.run(
+                        ['tar', '-czf', tar_path, '-C', summary_base, 'summary/'],
+                        capture_output=True, text=True
+                    )
+                    
+                    if result.returncode == 0:
+                        # Verify file was created
+                        if os.path.exists(tar_path):
+                            file_size_bytes = os.path.getsize(tar_path)
+                            file_size_mb = file_size_bytes / (1024 * 1024)
+                            
+                            logger.info('='*60)
+                            logger.info('✓ Summary archive created successfully!')
+                            logger.info('  File: %s', tar_filename)
+                            logger.info('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
+                            logger.info('  Path: %s', tar_path)
+                            logger.info('='*60)
+                            logger.info('DOWNLOAD INSTRUCTIONS:')
+                            logger.info('1. Wait for notebook to finish execution')
+                            logger.info('2. Click "Save Version" → "Quick Save"')
+                            logger.info('3. Go to "Output" tab on the right')
+                            logger.info('4. Download "%s"', tar_filename)
+                            logger.info('='*60)
+                        else:
+                            logger.error('✗ Archive file not found after creation: %s', tar_path)
+                    else:
+                        logger.error('✗ tar command failed with return code: %d', result.returncode)
+                        if result.stderr:
+                            logger.error('  Error: %s', result.stderr)
+                else:
+                    logger.warning('Summary directory not found: %s', summary_dir)
+                    logger.warning('No summary archive will be created.')
+                    
+            except Exception as e:
+                logger.error('Failed to create summary archive: %s', str(e))
+                import traceback
+                logger.error('Traceback: %s', traceback.format_exc())
+        
         # ✅ CRITICAL: Always cleanup
         logger.info('')
         logger.info('Running cleanup before exit...')
