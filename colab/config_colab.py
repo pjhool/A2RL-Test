@@ -41,7 +41,13 @@ else:
 TRAIN_PATH = DATA_ROOT # Update this if data is elsewhere
       
 MODEL_SNAPSHOT = os.path.join(DRIVE_ROOT, 'a2rl_model/model-spp-max')
-SAVE_MODEL_DIR = os.path.join(DRIVE_ROOT, 'save_model', date_str)
+if IS_COLAB:
+    SAVE_MODEL_DIR = os.path.join(DRIVE_ROOT, 'save_model', date_str)
+elif IS_KAGGLE:
+    SAVE_MODEL_DIR = os.path.join(LOG_SUMMARY_ROOT, 'save_model', date_str) 
+else:
+    SAVE_MODEL_DIR = os.path.join(LOG_SUMMARY_ROOT, 'save_model', date_str) 
+
 SUMMARY_DIR = os.path.join(LOG_SUMMARY_ROOT, 'summary', 'A2RL_a3c', date_str)
 LOG_DIR = os.path.join(LOG_SUMMARY_ROOT, 'logs', date_str)
 ALEXNET_NPY = os.path.join(DRIVE_ROOT, 'alexnet.npy')
