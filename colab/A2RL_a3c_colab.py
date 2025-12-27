@@ -1870,7 +1870,48 @@ if __name__ == "__main__":
     config_tf.gpu_options.allow_growth = True
     vfn_sess = tf.Session(config=config_tf)
     vfn_sess.run(tf.global_variables_initializer())
-    saver.restore(vfn_sess, snapshot)
+    # Validate snapshot files (fix for 'not an sstable' / Git LFS issues)
+    # TF checkpoint typically consists of .meta, .index, and .data-00000-of-00001
+    snapshot_prefix = snapshot
+    expected_extensions = ['.meta', '.index', '.data-00000-of-00001']
+    
+    for ext in expected_extensions:
+        fpath = snapshot_prefix + ext
+        # Some TF versions use different naming conventions, check standard ones
+        if not os.path.exists(fpath):
+            # Try finding without exact match for .data part
+            if ext.startswith('.data'):
+                import glob
+                matches = glob.glob(snapshot_prefix + '.data*')
+                if matches:
+                    fpath = matches[0]
+                else:
+                    logger.warning(f"Checkpoint component not found: {fpath}")
+                    continue
+            else:
+                logger.warning(f"Checkpoint component not found: {fpath}")
+                continue
+                
+        try:
+            fsize = os.path.getsize(fpath)
+            logger.info(f"Checking model file: {fpath} ({fsize/1024/1024:.2f} MB)")
+            if fsize < 2048: # Less than 2KB implies Git LFS pointer or corruption
+                logger.error(f"❌ CRITICAL ERROR: Model file {fpath} is too small ({fsize} bytes).")
+                logger.error("It likely contains a Git LFS pointer instead of binary data.")
+                logger.error("SOLUTION: Please install git-lfs and run 'git lfs pull', or upload models via Kaggle Datasets.")
+                sys.exit(1)
+        except OSError:
+            pass
+
+    logger.info(f"Restoring VFN model from snapshot: {snapshot}")
+    try:
+        saver.restore(vfn_sess, snapshot)
+    except tf.errors.DataLossError:
+        logger.error("❌ DataLossError during restore! The model file is likely corrupted or not a valid TF checkpoint.")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"❌ Error restoring model: {e}")
+        raise e
 
     # Dataset Preprocessing
     if args.preprocess:
