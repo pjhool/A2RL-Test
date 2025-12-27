@@ -10,18 +10,41 @@ import os
 now = datetime.datetime.now()
 date_str = now.strftime('%Y%m%d')
 time_str = now.strftime('%H%M%S')
-# Assuming Google Drive is mounted at /content/drive
-DRIVE_ROOT = '/content/drive/MyDrive/A2RL/A2RL-Test'
-DATA_ROOT = '/content/drive/MyDrive/A2RL/data'  # Or wherever data is
-LOG_SUMMARY_ROOT = '/content'  # Or wherever data is
+# Environment Detection
+IS_COLAB = 'COLAB_GPU' in os.environ
+IS_KAGGLE = 'KAGGLE_KERNEL_RUN_TYPE' in os.environ
+
+if IS_COLAB:
+    print("Config: Detected Google Colab Environment")
+    # Assuming Google Drive is mounted at /content/drive
+    DRIVE_ROOT = '/content/drive/MyDrive/A2RL/A2RL-Test'
+    DATA_ROOT = '/content/drive/MyDrive/A2RL/data'
+    LOG_SUMMARY_ROOT = '/content'  # Local VM disk for speed, sync later
+    
+elif IS_KAGGLE:
+    print("Config: Detected Kaggle Environment")
+    # Kaggle directory structure
+    DRIVE_ROOT = '/kaggle/working/A2RL-Test' # Output directory
+    DATA_ROOT = '/kaggle/input/a2rl-data'    # Read-only input data
+    LOG_SUMMARY_ROOT = '/kaggle/working'     # Writable output directory
+    
+    # Ensure working dirs exist in Kaggle
+    if not os.path.exists(DRIVE_ROOT):
+        os.makedirs(DRIVE_ROOT, exist_ok=True)
+        
+else:
+    print("Config: Detected Local Environment (Fallback)")
+    DRIVE_ROOT = './'
+    DATA_ROOT = './data'
+    LOG_SUMMARY_ROOT = './'
 
 TRAIN_PATH = DATA_ROOT # Update this if data is elsewhere
       
-MODEL_SNAPSHOT = DRIVE_ROOT + '/a2rl_model/model-spp-max'
+MODEL_SNAPSHOT = os.path.join(DRIVE_ROOT, 'a2rl_model/model-spp-max')
 SAVE_MODEL_DIR = os.path.join(DRIVE_ROOT, 'save_model', date_str)
 SUMMARY_DIR = os.path.join(LOG_SUMMARY_ROOT, 'summary', 'A2RL_a3c', date_str)
 LOG_DIR = os.path.join(LOG_SUMMARY_ROOT, 'logs', date_str)
-ALEXNET_NPY = DRIVE_ROOT + '/alexnet.npy'
+ALEXNET_NPY = os.path.join(DRIVE_ROOT, 'alexnet.npy')
 
 # --- A3C Hyperparameters ---
 ACTOR_LR = 1.0e-4
