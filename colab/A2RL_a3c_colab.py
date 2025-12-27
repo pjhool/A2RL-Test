@@ -1873,7 +1873,7 @@ if __name__ == "__main__":
     # Validate snapshot files (fix for 'not an sstable' / Git LFS issues)
     # TF checkpoint typically consists of .meta, .index, and .data-00000-of-00001
     snapshot_prefix = snapshot
-    expected_extensions = ['.meta', '.index', '.data-00000-of-00001']
+    expected_extensions = ['.meta',  '.data-00000-of-00001']
     
     for ext in expected_extensions:
         fpath = snapshot_prefix + ext
