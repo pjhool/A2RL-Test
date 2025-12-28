@@ -1761,7 +1761,10 @@ class Agent(threading.Thread):
 
         states = np.float32(states )
 
-        values = self.critic.predict(states)
+        # Use local_critic on assigned GPU for value prediction to reduce GPU 0 bottleneck
+        with a3c_graph.as_default():
+            with self.sess.as_default():
+                values = self.local_critic.predict_on_batch(states)
         values = np.reshape(values, len(values))
 
         advantages = discounted_prediction - values
