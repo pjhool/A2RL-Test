@@ -1,5 +1,6 @@
 import sys
 import os
+import subprocess
 
 # Suppress warnings in Kaggle environment
 try:
@@ -205,18 +206,16 @@ def log_gpu_usage():
     """
     Execute nvidia-smi and log the output for status monitoring.
     """
-    if config.IS_KAGGLE or not sys.platform.startswith('win'):
-        try:
-            import subprocess
-            result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
-            if result.returncode == 0:
-                logger.warning("\n" + "="*30 + " GPU STATUS " + "="*30 + "\n" + 
-                           result.stdout + 
-                           "\n" + "="*72)
-            else:
-                logger.warning("nvidia-smi execution failed (code %d)", result.returncode)
-        except Exception as e:
-            logger.debug("Failed to run nvidia-smi: %s", e)
+    try:
+        result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+        if result.returncode == 0:
+            logger.warning("\n" + "="*30 + " GPU STATUS " + "="*30 + "\n" + 
+                        result.stdout + 
+                        "\n" + "="*72)
+        else:
+            logger.warning("nvidia-smi execution failed (code %d)", result.returncode)
+    except Exception as e:
+        logger.debug("Failed to run nvidia-smi: %s", e)
 
 def apply_feature_scaling(features, method='standardization', stats=None, epsilon=1e-8):
     """
@@ -1734,8 +1733,11 @@ class Agent(threading.Thread):
             if epoch_step % 10 == 0:
                 with gpu_log_lock:
                     if current_log_key != last_gpu_log_epoch:
+                        logger.info('Thread %d - Triggering periodic GPU usage log for %s', self.thread_id, current_log_key)
                         log_gpu_usage()
                         last_gpu_log_epoch = current_log_key
+                    else:
+                        logger.debug('Thread %d - GPU usage log for %s already handled by another thread', self.thread_id, current_log_key)
                 
             TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
