@@ -642,8 +642,7 @@ class A3CAgent:
                     
                     logger.info('Thread %d: allocated %d training images', i, len(agent_train_files))
                     
-                    # Pass 'self' as brain to Agent to allow device-specific optimizer creation
-                    agents.append(Agent(self, self.action_size, self.state_size,
+                    agents.append(Agent(self.action_size, self.state_size,
                                         [self.actor, self.critic], self.sess,
                                         self.optimizer, self.discount_factor,
                                         [self.summary_op, self.summary_placeholders,
@@ -691,8 +690,7 @@ class A3CAgent:
             return
         else:
             # Standard training mode
-            # Pass 'self' as brain to Agent
-            agents = [Agent(self, self.action_size, self.state_size,
+            agents = [Agent(self.action_size, self.state_size,
                             [self.actor, self.critic], self.sess,
                             self.optimizer, self.discount_factor,
                              [self.summary_op, self.summary_placeholders,
@@ -1033,13 +1031,12 @@ class A3CAgent:
 
 # 액터러너 클래스(쓰레드)
 class Agent(threading.Thread):
-    def __init__(self, brain, action_size, state_size, model, sess,
+    def __init__(self, action_size, state_size, model, sess,
                  optimizer, discount_factor, summary_ops, train_path=None, train_files=None, val_files=None,
                  start_epoch=0, current_fold=None, thread_id=0):
         threading.Thread.__init__(self)
 
         # A3CAgent 클래스에서 상속
-        self.brain = brain
         self.action_size = action_size
         self.state_size = state_size
         self.actor, self.critic = model
@@ -1764,7 +1761,6 @@ class Agent(threading.Thread):
 
         states = np.float32(states )
 
-        # Using global critic for advantage calculation as per user's preference
         values = self.critic.predict(states)
         values = np.reshape(values, len(values))
 
@@ -1823,20 +1819,11 @@ class Agent(threading.Thread):
             gpu_idx = self.thread_id % num_gpus
             device_name = f"/gpu:{gpu_idx}"
         
-        logger.info("Thread %d: Assigning local model and optimizers to %s", self.thread_id, device_name)
+        logger.info("Thread %d: Assigning local model to %s", self.thread_id, device_name)
         
         with tf.device(device_name):
             with a3c_graph.as_default():
                 with self.sess.as_default():
-                    # Re-create training functions (optimizers) on this specific device
-                    # These will still update the SHARED global weights of self.actor/critic
-                    try:
-                        self.optimizer = [self.brain.actor_optimizer(), self.brain.critic_optimizer()]
-                        logger.debug("Thread %d: Device-specific optimizers created.", self.thread_id)
-                    except Exception as e:
-                        logger.error("Thread %d: Failed to create device optimizers: %s", self.thread_id, e)
-                        # Fallback to brain's default optimizers
-                    
                     logger.debug('Child build_local_model graph: %s', tf.get_default_graph())
             K.set_learning_phase(1)  # set learning phase
 
