@@ -568,11 +568,16 @@ class A3CAgent:
         self.beta = config.BETA
         # 쓰레드의 갯수
         self.threads = config.THREADS
-        #self.threads = 8
         self.initial_load_path = None
         self._weights_loaded = False
-
-
+        # GPU Detection for Colab/Kaggle (Must be before build_model)
+        self.gpus = tf.config.list_physical_devices('GPU')
+        self.num_gpus = len(self.gpus) if self.gpus else 0
+        
+        # GPU Config for Colab/Kaggle
+        config_tf = tf.ConfigProto(allow_soft_placement=True)
+        config_tf.gpu_options.allow_growth = True
+        
         # 정책신경망과 가치신경망을 생성
         self.actor, self.critic = self.build_model()
         # 정책신경망과 가치신경망을 업데이트하는 함수 생성
@@ -582,13 +587,8 @@ class A3CAgent:
 
         logger.debug('Parent default graph: %s', tf.get_default_graph())
 
-        # GPU Config for Colab/Kaggle
-        config_tf = tf.ConfigProto(allow_soft_placement=True)
-        config_tf.gpu_options.allow_growth = True
-        
         # Detect available GPUs again for mapping
-        self.gpus = tf.config.list_physical_devices('GPU')
-        self.num_gpus = len(self.gpus) if self.gpus else 0
+        # (Already detected above, kept for consistency or deleted)
         
         self.sess = tf.InteractiveSession(config=config_tf)
         if hasattr(K, 'set_session'):
@@ -677,7 +677,8 @@ class A3CAgent:
                                         train_files=agent_train_files, val_files=agent_val_files,
                                         start_epoch=current_start_epoch,
                                         current_fold=fold_idx,
-                                        thread_id=i))
+                                        thread_id=i,
+                                        brain=self))
 
                 # 각 쓰레드 시작
                 for agent in agents:
@@ -724,7 +725,8 @@ class A3CAgent:
                              train_path=train_path,
                              start_epoch=start_epoch,
                              current_fold=0,
-                             thread_id=i)
+                             thread_id=i,
+                             brain=self)
                        for i in range(self.threads)]
 
             # 각 쓰레드 시작
@@ -785,8 +787,12 @@ class A3CAgent:
 
     # 정책신경망과 가치신경망을 생성
     def build_model(self):
-
-        logger.debug('Parent Model default graph: %s', tf.get_default_graph())
+        # Pin global model to GPU 0 (Parameter Server Role)
+        device = "/gpu:0" if self.num_gpus > 0 else "/cpu:0"
+        logger.info("A3CAgent: Placing global model on %s", device)
+        
+        with tf.device(device):
+            logger.debug('Parent Model default graph: %s', tf.get_default_graph())
         if hasattr(K, 'set_learning_phase'):
             try:
                 K.set_learning_phase(1)  # set learning phase
@@ -1060,7 +1066,7 @@ class A3CAgent:
 class Agent(threading.Thread):
     def __init__(self, action_size, state_size, model, sess,
                  optimizer, discount_factor, summary_ops, train_path=None, train_files=None, val_files=None,
-                 start_epoch=0, current_fold=None, thread_id=0):
+                 start_epoch=0, current_fold=None, thread_id=0, brain=None):
         threading.Thread.__init__(self)
 
         # A3CAgent 클래스에서 상속
@@ -1079,6 +1085,7 @@ class Agent(threading.Thread):
         self.start_epoch = start_epoch
         self.current_fold = current_fold
         self.thread_id = thread_id
+        self.brain = brain
         
         # Store GPU info for device placement
         self.gpus = tf.config.list_physical_devices('GPU')
@@ -1862,21 +1869,28 @@ class Agent(threading.Thread):
 
     # 로컬신경망을 생성하는 함수
     def build_local_model(self):
-        # Calculate target device based on thread_id
-        # Default to CPU if no GPUs, otherwise distribute across GPUs
+        # As per user request: Use GPU 1 for all worker computations if available
         device_name = "/cpu:0"
         num_gpus = getattr(self, 'num_gpus', 0)
         
-        if num_gpus > 0:
-            gpu_idx = self.thread_id % num_gpus
-            device_name = f"/gpu:{gpu_idx}"
+        if num_gpus > 1:
+            device_name = "/gpu:1"
+        elif num_gpus == 1:
+            device_name = "/gpu:0"
         
-        logger.info("Thread %d: Assigning local model to %s", self.thread_id, device_name)
+        logger.info("Thread %d: Assigning local model and computation to %s", self.thread_id, device_name)
         
         with tf.device(device_name):
             with a3c_graph.as_default():
                 with self.sess.as_default():
                     logger.debug('Child build_local_model graph: %s', tf.get_default_graph())
+                    
+                    # If brain is available, create local optimizers on this device
+                    # This ensures the forward/backward passes happen on GPU 1
+                    if self.brain:
+                        self.optimizer = [self.brain.actor_optimizer(), self.brain.critic_optimizer()]
+                        logger.debug("Thread %d: Local optimizers created on %s", self.thread_id, device_name)
+                    
             K.set_learning_phase(1)  # set learning phase
 
             input = Input(shape=self.state_size)
