@@ -10,7 +10,7 @@ except ImportError:
 if config.IS_KAGGLE:
     # Suppress TensorFlow warnings
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF C++ warnings
-    os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Disable CUDA warnings if no GPU
+    # os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Removed to enable GPU usage
     
     # Suppress Python warnings
     import warnings
@@ -147,21 +147,21 @@ log_level_map = {
     'CRITICAL': logging.CRITICAL
 }
 
-# Get console level from environment variable
-console_level_str = os.environ.get('A2RL_CONSOLE_LOG_LEVEL', None)
-
-if console_level_str:
-    # Use environment variable if set
-    console_level = log_level_map.get(console_level_str.upper(), logging.INFO)
-    print(f"Console log level set from environment: {console_level_str.upper()}")
-elif config.IS_KAGGLE:
-    # Kaggle default: WARNING to reduce output
-    console_level = logging.WARNING
-else:
-    # Local default: INFO
-    console_level = logging.INFO
+# Initialize Logger
+console_level_name = os.environ.get('A2RL_CONSOLE_LOG_LEVEL', 'WARNING' if config.IS_KAGGLE else 'INFO')
+console_level = getattr(logging, console_level_name.upper(), logging.WARNING if config.IS_KAGGLE else logging.INFO)
 
 logger = setup_logger('A2RL', log_dir=config.LOG_DIR, level=logging.DEBUG, console_level=console_level)
+logger.info("Console log level set from environment/default: %s", console_level_name)
+
+# Detect GPUs
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    logger.info("✓ GPUs detected: %d", len(gpus))
+    for i, gpu in enumerate(gpus):
+        logger.info("  - GPU %d: %s", i, gpu)
+else:
+    logger.warning("✗ No GPUs detected. Running on CPU.")
 
 # Feature Scaling Helper Functions
 def load_feature_stats(stats_path):
