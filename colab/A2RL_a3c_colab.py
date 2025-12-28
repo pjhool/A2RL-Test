@@ -197,6 +197,23 @@ def load_feature_stats(stats_path):
         return None
 
 
+def log_gpu_usage():
+    """
+    Execute nvidia-smi and log the output for status monitoring.
+    """
+    if config.IS_KAGGLE or not sys.platform.startswith('win'):
+        try:
+            import subprocess
+            result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
+            if result.returncode == 0:
+                logger.info("\n" + "="*30 + " GPU STATUS " + "="*30 + "\n" + 
+                           result.stdout + 
+                           "\n" + "="*72)
+            else:
+                logger.warning("nvidia-smi execution failed (code %d)", result.returncode)
+        except Exception as e:
+            logger.debug("Failed to run nvidia-smi: %s", e)
+
 def apply_feature_scaling(features, method='standardization', stats=None, epsilon=1e-8):
     """
     Apply feature scaling to input features.
@@ -1703,6 +1720,11 @@ class Agent(threading.Thread):
 
         for epoch_step in range(self.start_epoch, self.epoch_size):
             logger.info('Thread %d - Epoch step: %d', self.thread_id, epoch_step)
+            
+            # log GPU usage every 10 epochs for the primary thread
+            if self.thread_id == 0 and epoch_step % 10 == 0:
+                log_gpu_usage()
+                
             TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
             # Use current fold's train files or default to full path
@@ -1823,7 +1845,6 @@ class Agent(threading.Thread):
         
         if num_gpus > 0:
             gpu_idx = self.thread_id % num_gpus
-            gpu_idx = 1 
             device_name = f"/gpu:{gpu_idx}"
         
         logger.info("Thread %d: Assigning local model to %s", self.thread_id, device_name)
