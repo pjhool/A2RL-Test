@@ -143,6 +143,10 @@ env_name = "BreakoutDeterministic-v4"
 
 drop_ratio = 0.5
 
+# Global variables and locks for GPU logging
+gpu_log_lock = threading.Lock()
+last_gpu_log_epoch = -1
+
 # Initialize logger
 # Adjust console logging level based on environment variable or default
 log_level_map = {
@@ -1721,9 +1725,13 @@ class Agent(threading.Thread):
         for epoch_step in range(self.start_epoch, self.epoch_size):
             logger.info('Thread %d - Epoch step: %d', self.thread_id, epoch_step)
             
-            # log GPU usage every 10 epochs for the primary thread
-            if self.thread_id == 0 and epoch_step % 10 == 0:
-                log_gpu_usage()
+            # Thread-safe global GPU logging every 10 epochs
+            global last_gpu_log_epoch
+            if epoch_step % 10 == 0:
+                with gpu_log_lock:
+                    if epoch_step != last_gpu_log_epoch:
+                        log_gpu_usage()
+                        last_gpu_log_epoch = epoch_step
                 
             TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
