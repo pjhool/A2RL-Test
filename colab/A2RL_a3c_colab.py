@@ -138,10 +138,27 @@ env_name = "BreakoutDeterministic-v4"
 drop_ratio = 0.5
 
 # Initialize logger
-# Adjust console logging level based on environment
-if config.IS_KAGGLE:
-    console_level = logging.WARNING  # Reduce console output in Kaggle
+# Adjust console logging level based on environment variable or default
+log_level_map = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
+
+# Get console level from environment variable
+console_level_str = os.environ.get('A2RL_CONSOLE_LOG_LEVEL', None)
+
+if console_level_str:
+    # Use environment variable if set
+    console_level = log_level_map.get(console_level_str.upper(), logging.INFO)
+    print(f"Console log level set from environment: {console_level_str.upper()}")
+elif config.IS_KAGGLE:
+    # Kaggle default: WARNING to reduce output
+    console_level = logging.WARNING
 else:
+    # Local default: INFO
     console_level = logging.INFO
 
 logger = setup_logger('A2RL', log_dir=config.LOG_DIR, level=logging.DEBUG, console_level=console_level)
