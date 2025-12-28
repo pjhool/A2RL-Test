@@ -556,9 +556,14 @@ class A3CAgent:
 
         logger.debug('Parent default graph: %s', tf.get_default_graph())
 
-        # GPU Config for Colab
-        config_tf = tf.ConfigProto()
+        # GPU Config for Colab/Kaggle
+        config_tf = tf.ConfigProto(allow_soft_placement=True)
         config_tf.gpu_options.allow_growth = True
+        
+        # Detect available GPUs again for mapping
+        self.gpus = tf.config.list_physical_devices('GPU')
+        self.num_gpus = len(self.gpus) if self.gpus else 0
+        
         self.sess = tf.InteractiveSession(config=config_tf)
         if hasattr(K, 'set_session'):
             K.set_session(self.sess)
@@ -1047,6 +1052,10 @@ class Agent(threading.Thread):
         self.start_epoch = start_epoch
         self.current_fold = current_fold
         self.thread_id = thread_id
+        
+        # Store GPU info for device placement
+        self.gpus = tf.config.list_physical_devices('GPU')
+        self.num_gpus = len(self.gpus) if self.gpus else 0
 
         # 지정된 타임스텝동안 샘플을 저장할 리스트
         self.states, self.actions, self.rewards = [], [], []
@@ -1801,12 +1810,24 @@ class Agent(threading.Thread):
 
     # 로컬신경망을 생성하는 함수
     def build_local_model(self):
-        with a3c_graph.as_default():
-            with self.sess.as_default():
-                logger.debug('Child build_local_model graph: %s', tf.get_default_graph())
-        K.set_learning_phase(1)  # set learning phase
+        # Calculate target device based on thread_id
+        # Default to CPU if no GPUs, otherwise distribute across GPUs
+        device_name = "/cpu:0"
+        num_gpus = getattr(self, 'num_gpus', 0)
+        
+        if num_gpus > 0:
+            gpu_idx = self.thread_id % num_gpus
+            device_name = f"/gpu:{gpu_idx}"
+        
+        logger.info("Thread %d: Assigning local model to %s", self.thread_id, device_name)
+        
+        with tf.device(device_name):
+            with a3c_graph.as_default():
+                with self.sess.as_default():
+                    logger.debug('Child build_local_model graph: %s', tf.get_default_graph())
+            K.set_learning_phase(1)  # set learning phase
 
-        input = Input(shape=self.state_size)
+            input = Input(shape=self.state_size)
 
         #input = Input(shape=( 1 , 2000  ))
         fc1 = Dense(1024, activation = 'relu') (input)
