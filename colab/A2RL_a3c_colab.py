@@ -1733,6 +1733,11 @@ class Agent(threading.Thread):
             global gpu_logged_epochs
             current_log_key = (self.current_fold, epoch_step)
             
+            # DEBUG PRINT FOR KAGGLE
+            if epoch_step % config.GPU_LOG_INTERVAL == 0:
+                print("DEBUG: Thread {} hit log check for Fold {}, Epoch {}".format(self.thread_id, self.current_fold, epoch_step))
+                print("DEBUG: last_log_key: {}, current_log_key: {}".format(list(gpu_logged_epochs)[:5], current_log_key))
+                
             if epoch_step % config.GPU_LOG_INTERVAL == 0:
                 with gpu_log_lock:
                     if current_log_key not in gpu_logged_epochs:
