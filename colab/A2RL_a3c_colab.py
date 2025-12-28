@@ -2161,6 +2161,7 @@ if __name__ == "__main__":
             total_epochs = config.K_FOLDS * config.EPOCH_SIZE
         else:
             total_epochs = config.EPOCH_SIZE
+        total_elapsed = time.time() - script_start_time
             
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
