@@ -145,7 +145,7 @@ drop_ratio = 0.5
 
 # Global variables and locks for GPU logging
 gpu_log_lock = threading.Lock()
-last_gpu_log_epoch = -1
+last_gpu_log_epoch = None
 
 # Initialize logger
 # Adjust console logging level based on environment variable or default
@@ -210,7 +210,7 @@ def log_gpu_usage():
             import subprocess
             result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
             if result.returncode == 0:
-                logger.info("\n" + "="*30 + " GPU STATUS " + "="*30 + "\n" + 
+                logger.warning("\n" + "="*30 + " GPU STATUS " + "="*30 + "\n" + 
                            result.stdout + 
                            "\n" + "="*72)
             else:
@@ -724,6 +724,7 @@ class A3CAgent:
                               self.update_ops, self.summary_writer],
                              train_path=train_path,
                              start_epoch=start_epoch,
+                             current_fold=0,
                              thread_id=i)
                        for i in range(self.threads)]
 
@@ -1726,12 +1727,15 @@ class Agent(threading.Thread):
             logger.info('Thread %d - Epoch step: %d', self.thread_id, epoch_step)
             
             # Thread-safe global GPU logging every 10 epochs
+            # Tracks (fold, epoch) to avoid skipping when epochs reset in new folds
             global last_gpu_log_epoch
+            current_log_key = (self.current_fold, epoch_step)
+            
             if epoch_step % 10 == 0:
                 with gpu_log_lock:
-                    if epoch_step != last_gpu_log_epoch:
+                    if current_log_key != last_gpu_log_epoch:
                         log_gpu_usage()
-                        last_gpu_log_epoch = epoch_step
+                        last_gpu_log_epoch = current_log_key
                 
             TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
