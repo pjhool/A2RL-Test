@@ -71,6 +71,9 @@ TRAIN_SIZE = 100
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE
 
 EPOCH_SIZE = int(os.environ.get('A2RL_EPOCH_SIZE', '100'))
+MAX_EPISODES = int(os.environ.get('A2RL_MAX_EPISODES', '100'))
+MAX_TRAIN_HOURS = float(os.environ.get('A2RL_MAX_TRAIN_HOURS', '0')) # 0 means no limit
+
 
 INITIAL_SCORE_THRESHOLD = 10.0
 PREPROCESS_BATCH_SIZE = 64
@@ -133,4 +136,4 @@ LOG_INTERVAL_IMAGE_LOADING = 50 if IS_KAGGLE else 10
 LOG_INTERVAL_PREPROCESSING = 500 if IS_KAGGLE else 100
 
 # --- GPU Monitoring Settings ---
-GPU_LOG_INTERVAL = 1  # Log GPU status every 10 epochs
+GPU_LOG_INTERVAL = 10  # Log GPU status every 10 epochs
