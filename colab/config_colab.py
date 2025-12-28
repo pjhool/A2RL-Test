@@ -133,4 +133,4 @@ LOG_INTERVAL_IMAGE_LOADING = 50 if IS_KAGGLE else 10
 LOG_INTERVAL_PREPROCESSING = 500 if IS_KAGGLE else 100
 
 # --- GPU Monitoring Settings ---
-GPU_LOG_INTERVAL = 10  # Log GPU status every 10 epochs
+GPU_LOG_INTERVAL = 1  # Log GPU status every 10 epochs
