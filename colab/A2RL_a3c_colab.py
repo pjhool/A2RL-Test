@@ -1529,9 +1529,14 @@ class Agent(threading.Thread):
             use_random_sampling: If True, use random sampling. If False, use sequential sampling.
             file_list: Optional list of files to use.
         """
-        global episode, global_dtype, a3c_graph
+        global episode, global_dtype, a3c_graph, EPISODES
         
         for batch_idx in range(num_batches):
+            # Mid-epoch check for episode limit
+            if episode >= EPISODES:
+                logger.warning('Thread %d - Episode limit reached mid-epoch. Stopping batch processing.', self.thread_id)
+                break
+                
             batch_start = time.time()
             if num_batches > 1:
                 logger.info('=== Batch %d/%d ===', batch_idx + 1, num_batches)
@@ -1725,11 +1730,15 @@ class Agent(threading.Thread):
 
     def _run(self):
         # Original run logic moved to _run to keep the wrapper clean
-        global episode
-        global global_dtype
-        global a3c_graph
+        global episode, global_dtype, a3c_graph, EPISODES
 
         for epoch_step in range(self.start_epoch, self.epoch_size):
+            # Check for episode-based termination
+            if episode >= EPISODES:
+                logger.warning('Thread %d - Global episode limit reached (%d/%d). Terminating...', 
+                              self.thread_id, episode, EPISODES)
+                break
+                
             # Check for time-based termination
             if config.MAX_TRAIN_HOURS > 0 and self.brain:
                 elapsed_hours = (time.time() - self.brain.start_time) / 3600.0
