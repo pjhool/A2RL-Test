@@ -146,7 +146,7 @@ drop_ratio = 0.5
 
 # Global variables and locks for GPU logging
 gpu_log_lock = threading.Lock()
-last_gpu_log_epoch = None
+gpu_logged_epochs = set()  # Track (fold, epoch) that have been logged
 
 # Initialize logger
 # Adjust console logging level based on environment variable or default
@@ -1730,18 +1730,19 @@ class Agent(threading.Thread):
             
             # Thread-safe global GPU logging every 10 epochs
             # Tracks (fold, epoch) to avoid skipping when epochs reset in new folds
-            global last_gpu_log_epoch
+            global gpu_logged_epochs
             current_log_key = (self.current_fold, epoch_step)
             
-            if epoch_step % 10 == 0:
+            if epoch_step % config.GPU_LOG_INTERVAL == 0:
                 with gpu_log_lock:
-                    if current_log_key != last_gpu_log_epoch:
-                        logger.warning('Thread %d - Triggering periodic GPU usage log for %s', self.thread_id, str(current_log_key))
+                    if current_log_key not in gpu_logged_epochs:
+                        logger.warning('Thread %d - Triggering periodic GPU usage log (Fold %d, Epoch %d)', 
+                                      self.thread_id, self.current_fold, epoch_step)
                         log_gpu_usage()
-                        last_gpu_log_epoch = current_log_key
+                        gpu_logged_epochs.add(current_log_key)
                     else:
                         # Log as info so it doesn't clutter, but we know it's being checked
-                        logger.info('Thread %d - GPU log for %s already handled', self.thread_id, str(current_log_key))
+                        logger.debug('Thread %d - GPU log for %s already handled', self.thread_id, str(current_log_key))
                 
             TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
