@@ -2156,7 +2156,12 @@ if __name__ == "__main__":
         final_model_dir = os.path.join(config.SAVE_MODEL_DIR, "final_model_{}".format(time_str_final))
         global_agent.save_model(final_model_dir, metadata={'episode': episode, 'status': 'final'})
         logger.info("Final model saved to: %s", final_model_dir)
-
+       # Calculate total epochs
+        if config.USE_K_FOLD:
+            total_epochs = config.K_FOLDS * config.EPOCH_SIZE
+        else:
+            total_epochs = config.EPOCH_SIZE
+            
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
         logger.warning("Total Executed Epochs: %d", total_epochs)
@@ -2185,11 +2190,7 @@ if __name__ == "__main__":
         logger.error('Traceback: %s', traceback.format_exc())
     finally:
         total_elapsed = time.time() - script_start_time
-        # Calculate total epochs
-        if config.USE_K_FOLD:
-            total_epochs = config.K_FOLDS * config.EPOCH_SIZE
-        else:
-            total_epochs = config.EPOCH_SIZE
+ 
             
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
