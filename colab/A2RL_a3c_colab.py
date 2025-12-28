@@ -1759,8 +1759,8 @@ class Agent(threading.Thread):
             
             # DEBUG PRINT FOR KAGGLE
             if epoch_step % config.GPU_LOG_INTERVAL == 0:
-                print("DEBUG: Thread {} hit log check for Fold {}, Epoch {}".format(self.thread_id, self.current_fold, epoch_step))
-                print("DEBUG: last_log_key: {}, current_log_key: {}".format(list(gpu_logged_epochs)[:5], current_log_key))
+                logger.debug("Thread %d hit log check for Fold %d, Epoch %d", self.thread_id, self.current_fold, epoch_step)
+                logger.debug("last_log_key: %s, current_log_key: %s", list(gpu_logged_epochs)[:5], str(current_log_key))
                 
             if epoch_step % config.GPU_LOG_INTERVAL == 0:
                 with gpu_log_lock:
@@ -2157,6 +2157,12 @@ if __name__ == "__main__":
         global_agent.save_model(final_model_dir, metadata={'episode': episode, 'status': 'final'})
         logger.info("Final model saved to: %s", final_model_dir)
 
+        logger.warning("="*60)
+        logger.warning("TRAINING SUMMARY")
+        logger.warning("Total Executed Epochs: %d", total_epochs)
+        logger.warning("Total Executed Episodes: %d", episode)
+        logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
+        logger.warning("="*60)
         # Optional: Evaluate after full training
         logger.info("Training completed. Running final evaluation...")
         try:
@@ -2185,12 +2191,12 @@ if __name__ == "__main__":
         else:
             total_epochs = config.EPOCH_SIZE
             
-        logger.info("="*60)
-        logger.info("TRAINING SUMMARY")
-        logger.info("Total Executed Epochs: %d", total_epochs)
-        logger.info("Total Executed Episodes: %d", episode)
-        logger.info("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
-        logger.info("="*60)
+        logger.warning("="*60)
+        logger.warning("TRAINING SUMMARY")
+        logger.warning("Total Executed Epochs: %d", total_epochs)
+        logger.warning("Total Executed Episodes: %d", episode)
+        logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
+        logger.warning("="*60)
         
         # ✅ Kaggle: Create summary archive for download
         if config.IS_KAGGLE:
@@ -2198,9 +2204,9 @@ if __name__ == "__main__":
             from datetime import datetime
             
             logger.info('')
-            logger.info('='*60)
-            logger.info('Creating summary archive for Kaggle download...')
-            logger.info('='*60)
+            logger.warning('='*60)
+            logger.warning('Creating summary archive for Kaggle download...')
+            logger.warning('='*60)
             
             try:
                 # Determine summary directory
@@ -2222,7 +2228,7 @@ if __name__ == "__main__":
                     tar_filename = 'summary_{}.tar.gz'.format(timestamp)
                     tar_path = os.path.join('/kaggle/working', tar_filename)
                     
-                    logger.info('Compressing summary to: %s', tar_filename)
+                    logger.warning('Compressing summary to: %s', tar_filename)
                     
                     # Create tar.gz archive
                     result = subprocess.run(
@@ -2236,18 +2242,18 @@ if __name__ == "__main__":
                             file_size_bytes = os.path.getsize(tar_path)
                             file_size_mb = file_size_bytes / (1024 * 1024)
                             
-                            logger.info('='*60)
-                            logger.info('✓ Summary archive created successfully!')
-                            logger.info('  File: %s', tar_filename)
-                            logger.info('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
-                            logger.info('  Path: %s', tar_path)
-                            logger.info('='*60)
-                            logger.info('DOWNLOAD INSTRUCTIONS:')
-                            logger.info('1. Wait for notebook to finish execution')
-                            logger.info('2. Click "Save Version" → "Quick Save"')
-                            logger.info('3. Go to "Output" tab on the right')
-                            logger.info('4. Download "%s"', tar_filename)
-                            logger.info('='*60)
+                            logger.warning('='*60)
+                            logger.warning('✓ Summary archive created successfully!')
+                            logger.warning('  File: %s', tar_filename)
+                            logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
+                            logger.warning('  Path: %s', tar_path)
+                            logger.warning('='*60)
+                            logger.warning('DOWNLOAD INSTRUCTIONS:')
+                            logger.warning('1. Wait for notebook to finish execution')
+                            logger.warning('2. Click "Save Version" → "Quick Save"')
+                            logger.warning('3. Go to "Output" tab on the right')
+                            logger.warning('4. Download "%s"', tar_filename)
+                            logger.warning('='*60)
                         else:
                             logger.error('✗ Archive file not found after creation: %s', tar_path)
                     else:
@@ -2266,7 +2272,7 @@ if __name__ == "__main__":
                     model_tar_filename = 'models_{}.tar.gz'.format(timestamp)
                     model_tar_path = os.path.join('/kaggle/working', model_tar_filename)
                     
-                    logger.info('Compressing models from %s to: %s', model_dir, model_tar_filename)
+                    logger.warning('Compressing models from %s to: %s', model_dir, model_tar_filename)
                     
                     model_result = subprocess.run(
                         ['tar', '-czf', model_tar_path, '-C', model_base, os.path.basename(model_dir) + '/'],
@@ -2275,7 +2281,7 @@ if __name__ == "__main__":
                     
                     if model_result.returncode == 0:
                         if os.path.exists(model_tar_path):
-                            logger.info('✓ Model archive created: %s (%.2f MB)', 
+                            logger.warning('✓ Model archive created: %s (%.2f MB)', 
                                        model_tar_filename, os.path.getsize(model_tar_path)/(1024*1024))
                         else:
                             logger.error('✗ Model archive file not found: %s', model_tar_path)
