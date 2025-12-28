@@ -10,7 +10,13 @@ except ImportError:
 if config.IS_KAGGLE:
     # Suppress TensorFlow warnings
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF C++ warnings
-    # os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Removed to enable GPU usage
+    # GPU Selection: If A2RL_VISIBLE_DEVICES is set (e.g., '1'), restrict TF to that GPU.
+    # Otherwise, ensure CUDA_VISIBLE_DEVICES is not empty to allow all/default GPUs.
+    if 'A2RL_VISIBLE_DEVICES' in os.environ:
+        os.environ['CUDA_VISIBLE_DEVICES'] = os.environ['A2RL_VISIBLE_DEVICES']
+        # Note: If set to '1', physically GPU 1 becomes internally '/gpu:0'
+    elif 'CUDA_VISIBLE_DEVICES' in os.environ and os.environ['CUDA_VISIBLE_DEVICES'] == '':
+        del os.environ['CUDA_VISIBLE_DEVICES'] # Ensure it's not explicitly disabled
     
     # Suppress Python warnings
     import warnings
@@ -1817,6 +1823,7 @@ class Agent(threading.Thread):
         
         if num_gpus > 0:
             gpu_idx = self.thread_id % num_gpus
+            gpu_idx = 1 
             device_name = f"/gpu:{gpu_idx}"
         
         logger.info("Thread %d: Assigning local model to %s", self.thread_id, device_name)
