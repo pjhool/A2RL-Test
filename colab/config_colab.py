@@ -131,3 +131,6 @@ LOG_INTERVAL_IMAGE_LOADING = 50 if IS_KAGGLE else 10
 # Preprocessing progress log interval
 # Kaggle: Log every 500 images, Local: Log every 100 images
 LOG_INTERVAL_PREPROCESSING = 500 if IS_KAGGLE else 100
+
+# --- GPU Monitoring Settings ---
+GPU_LOG_INTERVAL = 10  # Log GPU status every 10 epochs
