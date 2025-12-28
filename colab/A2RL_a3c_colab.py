@@ -215,7 +215,7 @@ def log_gpu_usage():
         else:
             logger.warning("nvidia-smi execution failed (code %d)", result.returncode)
     except Exception as e:
-        logger.debug("Failed to run nvidia-smi: %s", e)
+        logger.warning("Unexpected error during nvidia-smi: %s", e)
 
 def apply_feature_scaling(features, method='standardization', stats=None, epsilon=1e-8):
     """
@@ -1723,7 +1723,10 @@ class Agent(threading.Thread):
         global a3c_graph
 
         for epoch_step in range(self.start_epoch, self.epoch_size):
-            logger.info('Thread %d - Epoch step: %d', self.thread_id, epoch_step)
+            if self.thread_id == 0:
+                logger.warning('Thread %d - Epoch step: %d/%d', self.thread_id, epoch_step, self.epoch_size)
+            else:
+                logger.info('Thread %d - Epoch step: %d', self.thread_id, epoch_step)
             
             # Thread-safe global GPU logging every 10 epochs
             # Tracks (fold, epoch) to avoid skipping when epochs reset in new folds
@@ -1733,11 +1736,12 @@ class Agent(threading.Thread):
             if epoch_step % 10 == 0:
                 with gpu_log_lock:
                     if current_log_key != last_gpu_log_epoch:
-                        logger.info('Thread %d - Triggering periodic GPU usage log for %s', self.thread_id, current_log_key)
+                        logger.warning('Thread %d - Triggering periodic GPU usage log for %s', self.thread_id, str(current_log_key))
                         log_gpu_usage()
                         last_gpu_log_epoch = current_log_key
                     else:
-                        logger.debug('Thread %d - GPU usage log for %s already handled by another thread', self.thread_id, current_log_key)
+                        # Log as info so it doesn't clutter, but we know it's being checked
+                        logger.info('Thread %d - GPU log for %s already handled', self.thread_id, str(current_log_key))
                 
             TrainPath = self.train_path if self.train_path else config.TRAIN_PATH
             
