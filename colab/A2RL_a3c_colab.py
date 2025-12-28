@@ -138,7 +138,7 @@ global_dtype_np = np.float32
 global episode
 episode = 0
 episode_lock = threading.Lock()
-EPISODES = 8000000
+EPISODES = config.MAX_EPISODES
 # 환경 생성
 env_name = "BreakoutDeterministic-v4"
 
@@ -1730,6 +1730,14 @@ class Agent(threading.Thread):
         global a3c_graph
 
         for epoch_step in range(self.start_epoch, self.epoch_size):
+            # Check for time-based termination
+            if config.MAX_TRAIN_HOURS > 0 and self.brain:
+                elapsed_hours = (time.time() - self.brain.start_time) / 3600.0
+                if elapsed_hours >= config.MAX_TRAIN_HOURS:
+                    logger.warning('Thread %d - Time limit reached (%.2f/%.2f hours). Terminating training...', 
+                                  self.thread_id, elapsed_hours, config.MAX_TRAIN_HOURS)
+                    break
+                    
             if self.thread_id == 0:
                 logger.warning('Thread %d - Epoch step: %d/%d', self.thread_id, epoch_step, self.epoch_size)
             else:
@@ -2241,8 +2249,34 @@ if __name__ == "__main__":
                     logger.warning('Summary directory not found: %s', summary_dir)
                     logger.warning('No summary archive will be created.')
                     
+                # --- Models Archiving ---
+                model_dir = config.SAVE_MODEL_DIR
+                model_base = os.path.dirname(os.path.abspath(model_dir))
+                
+                if os.path.exists(model_dir):
+                    model_tar_filename = 'models_{}.tar.gz'.format(timestamp)
+                    model_tar_path = os.path.join('/kaggle/working', model_tar_filename)
+                    
+                    logger.info('Compressing models from %s to: %s', model_dir, model_tar_filename)
+                    
+                    model_result = subprocess.run(
+                        ['tar', '-czf', model_tar_path, '-C', model_base, os.path.basename(model_dir) + '/'],
+                        capture_output=True, text=True
+                    )
+                    
+                    if model_result.returncode == 0:
+                        if os.path.exists(model_tar_path):
+                            logger.info('✓ Model archive created: %s (%.2f MB)', 
+                                       model_tar_filename, os.path.getsize(model_tar_path)/(1024*1024))
+                        else:
+                            logger.error('✗ Model archive file not found: %s', model_tar_path)
+                    else:
+                        logger.error('✗ Model tar failed: %s', model_result.stderr)
+                else:
+                    logger.warning('Model directory not found: %s', model_dir)
+                    
             except Exception as e:
-                logger.error('Failed to create summary archive: %s', str(e))
+                logger.error('Failed to create archives: %s', str(e))
                 import traceback
                 logger.error('Traceback: %s', traceback.format_exc())
         
