@@ -98,6 +98,17 @@ import numpy as np
 import threading
 import random
 import time
+import json
+
+# --- Google Drive Uploader Integration (Kaggle) ---
+if config.IS_KAGGLE:
+    try:
+        from kaggle_gdrive_uploader import upload_training_results_to_gdrive
+        HAS_GDRIVE_UPLOADER = True
+    except ImportError:
+        HAS_GDRIVE_UPLOADER = False
+else:
+    HAS_GDRIVE_UPLOADER = False
 
 #import gym
 
@@ -139,6 +150,7 @@ global episode
 episode = 0
 episode_lock = threading.Lock()
 EPISODES = config.MAX_EPISODES
+
 # 환경 생성
 env_name = "BreakoutDeterministic-v4"
 
@@ -2291,6 +2303,22 @@ if __name__ == "__main__":
                         logger.error('✗ Model tar failed: %s', model_result.stderr)
                 else:
                     logger.warning('Model directory not found: %s', model_dir)
+                
+                # --- Google Drive Upload ---
+                if config.IS_KAGGLE and HAS_GDRIVE_UPLOADER:
+                    logger.warning('='*60)
+                    logger.warning('Attempting to upload results to Google Drive...')
+                    logger.warning('='*60)
+                    
+                    gdrive_success = upload_training_results_to_gdrive(
+                        summary_file=tar_path if 'tar_path' in locals() else None,
+                        model_file=model_tar_path if 'model_tar_path' in locals() else None
+                    )
+                    
+                    if gdrive_success:
+                        logger.warning('✓ Results backed up to Google Drive successfully!')
+                    else:
+                        logger.warning('⚠️ Google Drive upload skipped or failed (check token.json)')
                     
             except Exception as e:
                 logger.error('Failed to create archives: %s', str(e))
