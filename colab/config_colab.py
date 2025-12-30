@@ -70,8 +70,8 @@ BATCH_SIZE = int(os.environ.get('A2RL_BATCH_SIZE', '32'))
 TRAIN_SIZE = 100
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE
 
-EPOCH_SIZE = int(os.environ.get('A2RL_EPOCH_SIZE', '100'))
-MAX_EPISODES = int(os.environ.get('A2RL_MAX_EPISODES', '100'))
+EPOCH_SIZE = int(os.environ.get('A2RL_EPOCH_SIZE', '200'))
+MAX_EPISODES = int(os.environ.get('A2RL_MAX_EPISODES', '20000'))
 MAX_TRAIN_HOURS = float(os.environ.get('A2RL_MAX_TRAIN_HOURS', '0')) # 0 means no limit
 
 # preprocess parameters
