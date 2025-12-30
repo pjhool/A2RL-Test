@@ -29,12 +29,7 @@ def objective(trial):
     env['A2RL_BETA'] = str(beta)
     
     # Additional User Configuration
-    """
-    env['A2RL_BATCH_SIZE'] = '8'
-    env['A2RL_THREADS'] = '8'
-    env['A2RL_T_MAX'] = '50'
-    env['A2RL_CONSOLE_LOG_LEVEL'] = 'WARNING'
-    """
+    
     # Speed up trials: Reduce epochs and episodes for faster feedback
     env['A2RL_EPOCH_SIZE'] = '50'        # Reduce from 200 to 50
     env['A2RL_MAX_EPISODES'] = '2000'    # Reduce from 20000 to 2000
