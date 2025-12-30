@@ -2273,6 +2273,8 @@ if __name__ == "__main__":
     logger.warning("ENVIRONMENT CONFIGURATION STATUS:")
     logger.warning("  A2RL_STOP_REWARD: %s (Current: %.2f)", 
                    os.environ.get('A2RL_STOP_REWARD', 'DEFAULT'), config.STOP_REWARD)
+    logger.warning("  A2RL_MIN_STEPS:   %s (Current: %d)", 
+                   os.environ.get('A2RL_MIN_STEPS', 'DEFAULT'), config.MIN_STEPS)
     logger.warning("  A2RL_BETA:        %s (Current: %.4f)", 
                    os.environ.get('A2RL_BETA', 'DEFAULT'), config.BETA)
     logger.warning("="*60)
