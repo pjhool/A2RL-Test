@@ -67,6 +67,7 @@ T_MAX = int(os.environ.get('A2RL_T_MAX', '50'))          # Maximum steps per epi
 UPDATE_FREQ = 10    # Model update frequency (t_max)
 STEP_PENALTY = 0.0
 MIN_STEPS = 3      # Encourage at least 3 steps before STOP
+STOP_REWARD = float(os.environ.get('A2RL_STOP_REWARD', '-0.5')) # Penalty for early STOP
 BATCH_SIZE = int(os.environ.get('A2RL_BATCH_SIZE', '32'))
 TRAIN_SIZE = 100
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE

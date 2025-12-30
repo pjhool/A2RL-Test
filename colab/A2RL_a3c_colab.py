@@ -1560,7 +1560,7 @@ class Agent(threading.Thread):
             if action == 13:
                 # Penalty for stopping too early
                 if step < config.MIN_STEPS:
-                    reward = -0.1
+                    reward = config.STOP_REWARD
                     logger.info('Action 13 (STOP) triggered too early (step %d < %d) - Penalty: %.4f', 
                                 step, config.MIN_STEPS, reward)
                 else:
