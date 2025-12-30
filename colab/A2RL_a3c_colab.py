@@ -100,8 +100,8 @@ import random
 import time
 import json
 
-# --- Google Drive Uploader Integration (Kaggle) ---
-if config.IS_KAGGLE:
+# --- Google Drive Uploader Integration (Kaggle/Colab) ---
+if config.IS_KAGGLE or config.IS_COLAB:
     try:
         from kaggle_gdrive_uploader import upload_training_results_to_gdrive
         HAS_GDRIVE_UPLOADER = True
@@ -2212,116 +2212,112 @@ if __name__ == "__main__":
         logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
         logger.warning("="*60)
         
-        # ✅ Kaggle: Create summary archive for download
-        if config.IS_KAGGLE:
+        # ✅ Cloud Backup: Create summary/model archives and upload to GDrive
+        if config.IS_KAGGLE or config.IS_COLAB:
             import subprocess
             from datetime import datetime
             
+            env_name = "Kaggle" if config.IS_KAGGLE else "Colab"
+            working_dir = config.LOG_SUMMARY_ROOT # /kaggle/working or /content
+            
             logger.info('')
             logger.warning('='*60)
-            logger.warning('Creating summary archive for Kaggle download...')
+            logger.warning('Creating result archives for %s...', env_name)
             logger.warning('='*60)
             
             try:
-                # Determine summary directory
+                # 1. Summary Archiving
                 summary_base = config.LOG_SUMMARY_ROOT
                 summary_dir = os.path.join(summary_base, 'summary')
                 
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                tar_path = None
+                model_tar_path = None
+
                 if os.path.exists(summary_dir):
-                    # Check directory size
-                    try:
-                        result = subprocess.run(['du', '-sh', summary_dir], 
-                                              capture_output=True, text=True, check=True)
-                        dir_size = result.stdout.split()[0]
-                        logger.info('Summary directory size: %s', dir_size)
-                    except Exception:
-                        pass
-                    
-                    # Create timestamped tar.gz file
-                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     tar_filename = 'summary_{}.tar.gz'.format(timestamp)
-                    tar_path = os.path.join('/kaggle/working', tar_filename)
+                    tar_path = os.path.join(working_dir, tar_filename)
                     
                     logger.warning('Compressing summary to: %s', tar_filename)
-                    
-                    # Create tar.gz archive
-                    result = subprocess.run(
+                    subprocess.run(
                         ['tar', '-czf', tar_path, '-C', summary_base, 'summary/'],
                         capture_output=True, text=True
                     )
                     
-                    if result.returncode == 0:
-                        # Verify file was created
-                        if os.path.exists(tar_path):
-                            file_size_bytes = os.path.getsize(tar_path)
-                            file_size_mb = file_size_bytes / (1024 * 1024)
-                            
-                            logger.warning('='*60)
-                            logger.warning('✓ Summary archive created successfully!')
-                            logger.warning('  File: %s', tar_filename)
-                            logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
-                            logger.warning('  Path: %s', tar_path)
-                            logger.warning('='*60)
+                    if os.path.exists(tar_path):
+                        file_size_bytes = os.path.getsize(tar_path)
+                        file_size_mb = file_size_bytes / (1024 * 1024)
+                        
+                        logger.warning('='*60)
+                        logger.warning('✓ Summary archive created successfully!')
+                        logger.warning('  File: %s', tar_filename)
+                        logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
+                        logger.warning('  Path: %s', tar_path)
+                        logger.warning('='*60)
+                        
+                        if config.IS_KAGGLE:
                             logger.warning('DOWNLOAD INSTRUCTIONS:')
                             logger.warning('1. Wait for notebook to finish execution')
                             logger.warning('2. Click "Save Version" → "Quick Save"')
                             logger.warning('3. Go to "Output" tab on the right')
                             logger.warning('4. Download "%s"', tar_filename)
                             logger.warning('='*60)
-                        else:
-                            logger.error('✗ Archive file not found after creation: %s', tar_path)
-                    else:
-                        logger.error('✗ tar command failed with return code: %d', result.returncode)
-                        if result.stderr:
-                            logger.error('  Error: %s', result.stderr)
                 else:
                     logger.warning('Summary directory not found: %s', summary_dir)
-                    logger.warning('No summary archive will be created.')
                     
-                # --- Models Archiving ---
+                # 2. Models Archiving
                 model_dir = config.SAVE_MODEL_DIR
                 model_base = os.path.dirname(os.path.abspath(model_dir))
                 
                 if os.path.exists(model_dir):
                     model_tar_filename = 'models_{}.tar.gz'.format(timestamp)
-                    model_tar_path = os.path.join('/kaggle/working', model_tar_filename)
+                    model_tar_path = os.path.join(working_dir, model_tar_filename)
                     
                     logger.warning('Compressing models from %s to: %s', model_dir, model_tar_filename)
-                    
-                    model_result = subprocess.run(
+                    subprocess.run(
                         ['tar', '-czf', model_tar_path, '-C', model_base, os.path.basename(model_dir) + '/'],
                         capture_output=True, text=True
                     )
                     
-                    if model_result.returncode == 0:
-                        if os.path.exists(model_tar_path):
-                            logger.warning('✓ Model archive created: %s (%.2f MB)', 
-                                       model_tar_filename, os.path.getsize(model_tar_path)/(1024*1024))
-                        else:
-                            logger.error('✗ Model archive file not found: %s', model_tar_path)
-                    else:
-                        logger.error('✗ Model tar failed: %s', model_result.stderr)
+                    if os.path.exists(model_tar_path):
+                        file_size_bytes = os.path.getsize(model_tar_path)
+                        file_size_mb = file_size_bytes / (1024 * 1024)
+                        
+                        logger.warning('='*60)
+                        logger.warning('✓ Model archive created successfully!')
+                        logger.warning('  File: %s', model_tar_filename)
+                        logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
+                        logger.warning('  Path: %s', model_tar_path)
+                        logger.warning('='*60)
+                        
+                        if config.IS_KAGGLE:
+                            logger.warning('DOWNLOAD INSTRUCTIONS:')
+                            logger.warning('1. Wait for notebook to finish execution')
+                            logger.warning('2. Click "Save Version" → "Quick Save"')
+                            logger.warning('3. Go to "Output" tab on the right')
+                            logger.warning('4. Download "%s"', model_tar_filename)
+                            logger.warning('='*60)
                 else:
                     logger.warning('Model directory not found: %s', model_dir)
                 
-                # --- Google Drive Upload ---
-                if config.IS_KAGGLE and HAS_GDRIVE_UPLOADER:
+                # 3. Google Drive Upload
+                if HAS_GDRIVE_UPLOADER:
                     logger.warning('='*60)
                     logger.warning('Attempting to upload results to Google Drive...')
                     logger.warning('='*60)
                     
                     gdrive_success = upload_training_results_to_gdrive(
-                        summary_file=tar_path if 'tar_path' in locals() else None,
-                        model_file=model_tar_path if 'model_tar_path' in locals() else None
+                        summary_file=tar_path,
+                        model_file=model_tar_path
                     )
                     
                     if gdrive_success:
                         logger.warning('✓ Results backed up to Google Drive successfully!')
                     else:
-                        logger.warning('⚠️ Google Drive upload skipped or failed (check token.json)')
-                    
+                        logger.warning('⚠️ Google Drive upload skipped or failed (check credentials)')
+                
             except Exception as e:
-                logger.error('Failed to create archives: %s', str(e))
+                logger.error('Failed to create/upload archives: %s', str(e))
                 import traceback
                 logger.error('Traceback: %s', traceback.format_exc())
         
