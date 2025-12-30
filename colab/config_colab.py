@@ -74,12 +74,15 @@ EPOCH_SIZE = int(os.environ.get('A2RL_EPOCH_SIZE', '100'))
 MAX_EPISODES = int(os.environ.get('A2RL_MAX_EPISODES', '100'))
 MAX_TRAIN_HOURS = float(os.environ.get('A2RL_MAX_TRAIN_HOURS', '0')) # 0 means no limit
 
+# preprocess parameters
 
 INITIAL_SCORE_THRESHOLD = 10.0
 PREPROCESS_BATCH_SIZE = 64
 PREPROCESS_WORKERS = 2 # Reduced for Colab
 FILTERED_TRAIN_PATH = DATA_ROOT + '/Filtered_Train'
 USE_FILTERED_DATA = True 
+
+
 
 # --- K-fold Cross-Validation Settings ---
 #USE_K_FOLD = True
