@@ -110,7 +110,7 @@ ACTION_SIZE = 14
 
 # --- Feature Scaling Settings ---
 ENABLE_FEATURE_SCALING = True
-FEATURE_SCALING_METHOD = 'global'
+FEATURE_SCALING_METHOD = 'standardization'
 FEATURE_STATS_PATH = DRIVE_ROOT + '/feature_stats.json'
 FEATURE_EPSILON = 1e-8
 
