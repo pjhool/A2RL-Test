@@ -44,19 +44,30 @@ def objective(trial):
     logger.info(f"  Fixed Config: BATCH_SIZE={env['A2RL_BATCH_SIZE']}, THREADS={env['A2RL_THREADS']}, T_MAX={env['A2RL_T_MAX']}, LOG_LEVEL={env['A2RL_CONSOLE_LOG_LEVEL']}")
     
     # 3. Run Training Script as Subprocess
+    output_buffer = []
     try:
-        # Capture output to parse the final score
-        # Using simplified command, assuming python is in path
-        result = subprocess.run(
+        # Use Popen to stream output in real-time
+        process = subprocess.Popen(
             [sys.executable, SCRIPT_PATH],
-            cwd=CURRENT_DIR, # Execute in the script's directory to ensure imports work
+            cwd=CURRENT_DIR,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, # Redirect stderr to stdout
             text=True,
-            check=True
+            bufsize=1 # Line buffered
         )
         
-        output = result.stderr + result.stdout # Use both streams as logger usually prints to stderr
+        # Read output line by line
+        for line in process.stdout:
+            print(line, end='') # Print to console for user visibility
+            output_buffer.append(line)
+            
+        process.wait()
+        
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, process.args, output="".join(output_buffer))
+            
+        output = "".join(output_buffer)
         
         # 4. Parse Final Evaluation Score
         # Look for the pattern: "Avg Final Score:   7.6307"
