@@ -2263,6 +2263,15 @@ if __name__ == "__main__":
             train_path = config.FILTERED_TRAIN_PATH
         else:
             logger.warning("USE_FILTERED_DATA is True but filtered path is empty or missing. Falling back to TRAIN_PATH.")
+    
+    # Log Key Environment Variable Configurations at WARNING level for visibility in Kaggle/Colab
+    logger.warning("="*60)
+    logger.warning("ENVIRONMENT CONFIGURATION STATUS:")
+    logger.warning("  A2RL_STOP_REWARD: %s (Current: %.2f)", 
+                   os.environ.get('A2RL_STOP_REWARD', 'DEFAULT'), config.STOP_REWARD)
+    logger.warning("  A2RL_BETA:        %s (Current: %.4f)", 
+                   os.environ.get('A2RL_BETA', 'DEFAULT'), config.BETA)
+    logger.warning("="*60)
 
     global_agent = A3CAgent(action_size=config.ACTION_SIZE)
     
