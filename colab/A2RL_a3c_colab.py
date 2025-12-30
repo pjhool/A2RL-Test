@@ -1132,7 +1132,7 @@ class A3CAgent:
         avg_improvement = np.mean([r['improvement'] for r in results])
         avg_steps = np.mean([r['steps'] for r in results])
         
-        logger.info("\n" + "="*60 +
+        logger.warning("\n" + "="*60 +
                     "\nEvaluation Summary Report:" +
                     "\n  Total Images: {}".format(len(results)) +
                     "\n  Avg Initial Score: {:.4f}".format(avg_initial) +
