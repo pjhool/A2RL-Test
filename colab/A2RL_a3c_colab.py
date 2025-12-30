@@ -1569,7 +1569,11 @@ class Agent(threading.Thread):
             else:
                 # Strengthen reward signal: use sign * 5.0 for clear direction
                 # but keep magnitude for relative quality.
-                reward = (np.sign(score_diff) )  - self.step_penalty * (self.t + 1)
+                # 스케일 계수 (10.0) 조정으로 보상 크기 조절
+                reward_score_improvement = score_diff * 10.0          
+                reward = reward_score_improvement  - self.step_penalty * (self.t + 1)
+                # 이전  코드 
+                #reward = (np.sign(score_diff) )  - self.step_penalty * (self.t + 1)
                 
                 # Check Aspect Ratio with validation
                 is_valid, asratio, penalty = validate_aspect_ratio(bbox)
