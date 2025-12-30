@@ -154,6 +154,122 @@ EPISODES = config.MAX_EPISODES
 # 환경 생성
 env_name = "BreakoutDeterministic-v4"
 
+def trigger_cloud_backup(is_periodic=True):
+    """
+    Create result archives and upload to Google Drive.
+    Can be called periodically or at the end of training.
+    """
+    if not (config.IS_KAGGLE or config.IS_COLAB):
+        return
+
+    import subprocess
+    from datetime import datetime
+    
+    env_name_str = "Kaggle" if config.IS_KAGGLE else "Colab"
+    working_dir = config.LOG_SUMMARY_ROOT # /kaggle/working or /content
+    
+    logger.info('')
+    logger.warning('='*60)
+    type_str = "PERIODIC" if is_periodic else "FINAL"
+    logger.warning('[%s] Creating result archives for %s...', type_str, env_name_str)
+    logger.warning('='*60)
+    
+    try:
+        # 1. Summary Archiving
+        summary_base = config.LOG_SUMMARY_ROOT
+        summary_dir = os.path.join(summary_base, 'summary')
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        tar_path = None
+        model_tar_path = None
+
+        if os.path.exists(summary_dir):
+            tar_filename = 'summary_{}_{}.tar.gz'.format(type_str.lower(), timestamp)
+            tar_path = os.path.join(working_dir, tar_filename)
+            
+            logger.warning('Compressing summary to: %s', tar_filename)
+            subprocess.run(
+                ['tar', '-czf', tar_path, '-C', summary_base, 'summary/'],
+                capture_output=True, text=True
+            )
+            
+            if os.path.exists(tar_path):
+                file_size_bytes = os.path.getsize(tar_path)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+                
+                logger.warning('='*60)
+                logger.warning('✓ Summary archive created successfully!')
+                logger.warning('  File: %s', tar_filename)
+                logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
+                logger.warning('  Path: %s', tar_path)
+                logger.warning('='*60)
+                
+                if config.IS_KAGGLE and not is_periodic:
+                    logger.warning('DOWNLOAD INSTRUCTIONS:')
+                    logger.warning('1. Wait for notebook to finish execution')
+                    logger.warning('2. Click "Save Version" → "Quick Save"')
+                    logger.warning('3. Go to "Output" tab on the right')
+                    logger.warning('4. Download "%s"', tar_filename)
+                    logger.warning('='*60)
+        else:
+            logger.warning('Summary directory not found: %s', summary_dir)
+            
+        # 2. Models Archiving
+        model_dir = config.SAVE_MODEL_DIR
+        model_base = os.path.dirname(os.path.abspath(model_dir))
+        
+        if os.path.exists(model_dir):
+            model_tar_filename = 'models_{}_{}.tar.gz'.format(type_str.lower(), timestamp)
+            model_tar_path = os.path.join(working_dir, model_tar_filename)
+            
+            logger.warning('Compressing models from %s to: %s', model_dir, model_tar_filename)
+            subprocess.run(
+                ['tar', '-czf', model_tar_path, '-C', model_base, os.path.basename(model_dir) + '/'],
+                capture_output=True, text=True
+            )
+            
+            if os.path.exists(model_tar_path):
+                file_size_bytes = os.path.getsize(model_tar_path)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+                
+                logger.warning('='*60)
+                logger.warning('✓ Model archive created successfully!')
+                logger.warning('  File: %s', model_tar_filename)
+                logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
+                logger.warning('  Path: %s', model_tar_path)
+                logger.warning('='*60)
+                
+                if config.IS_KAGGLE and not is_periodic:
+                    logger.warning('DOWNLOAD INSTRUCTIONS:')
+                    logger.warning('1. Wait for notebook to finish execution')
+                    logger.warning('2. Click "Save Version" → "Quick Save"')
+                    logger.warning('3. Go to "Output" tab on the right')
+                    logger.warning('4. Download "%s"', model_tar_filename)
+                    logger.warning('='*60)
+        else:
+            logger.warning('Model directory not found: %s', model_dir)
+        
+        # 3. Google Drive Upload
+        if HAS_GDRIVE_UPLOADER:
+            logger.warning('='*60)
+            logger.warning('Attempting to upload results to Google Drive...')
+            logger.warning('='*60)
+            
+            gdrive_success = upload_training_results_to_gdrive(
+                summary_file=tar_path,
+                model_file=model_tar_path
+            )
+            
+            if gdrive_success:
+                logger.warning('✓ Results backed up to Google Drive successfully!')
+            else:
+                logger.warning('⚠️ Google Drive upload skipped or failed (check credentials)')
+                
+    except Exception as e:
+        logger.error('Failed to create/upload archives: %s', str(e))
+        import traceback
+        logger.error('Traceback: %s', traceback.format_exc())
+
 drop_ratio = 0.5
 
 # Global variables and locks for GPU logging
@@ -761,34 +877,54 @@ class A3CAgent:
         """
         Periodic model saving loop. Runs in a separate thread.
         Uses graph and session pinning to ensure thread safety in TF1/Keras.
+        Also handles periodic cloud backups if enabled.
         """
+        last_gdrive_backup_time = time.time()
+        
         while True:
-            time.sleep(60 * config.SAVE_INTERVAL_MINUTES)
-            logdir = None
-            try:
-                with a3c_graph.as_default():
-                    with self.sess.as_default():
-                        now = datetime.now().strftime("%Y%m%d%H%M%S")
-                        logger.info('Periodic model save initiated: %s', now)
-                        root_logdir = config.SAVE_MODEL_DIR
-                        logdir = "{}/A2RL_a3c_periodic_{}".format(root_logdir, now)
-                        
-                        metadata = {
-                            'fold': 0,
-                            'epoch': 0,
-                            'episode': episode,
-                            'status': 'periodic'
-                        }
-                        self.save_model(logdir, metadata=metadata)
-                        
-                        # Explicitly flush summaries to ensure they are written to Drive
-                        if hasattr(self, 'summary_writer'):
-                            self.summary_writer.flush()
-                            logger.info('TensorBoard summaries flushed to disk.')
-                        
-                        logger.info('Periodic model saved successfully: %s', logdir)
-            except Exception as e:
-                logger.error("Error in periodic save thread: %s", str(e), exc_info=True)
+            # Check for model save interval (default 10 mins)
+            time.sleep(60) # Wake up every minute to check both intervals
+            
+            # 1. Periodic Model Save
+            now_time = time.time()
+            # Determine if it's time for a model save Since self.start_time
+            if int(now_time - self.start_time) % (60 * config.SAVE_INTERVAL_MINUTES) < 60:
+                logdir = None
+                try:
+                    with a3c_graph.as_default():
+                        with self.sess.as_default():
+                            now = datetime.now().strftime("%Y%m%d%H%M%S")
+                            logger.info('Periodic model save initiated: %s', now)
+                            root_logdir = config.SAVE_MODEL_DIR
+                            logdir = "{}/A2RL_a3c_periodic_{}".format(root_logdir, now)
+                            
+                            metadata = {
+                                'fold': 0,
+                                'epoch': 0,
+                                'episode': episode,
+                                'status': 'periodic'
+                            }
+                            self.save_model(logdir, metadata=metadata)
+                            
+                            # Explicitly flush summaries to ensure they are written to disk
+                            if hasattr(self, 'summary_writer'):
+                                self.summary_writer.flush()
+                                logger.info('TensorBoard summaries flushed to disk.')
+                            
+                            logger.info('Periodic model saved successfully: %s', logdir)
+                except Exception as e:
+                    logger.error("Error in periodic save thread: %s", str(e), exc_info=True)
+
+            # 2. Periodic Cloud Backup (Google Drive)
+            if config.GDRIVE_BACKUP_ENABLED and HAS_GDRIVE_UPLOADER:
+                if (now_time - last_gdrive_backup_time) >= (60 * config.GDRIVE_BACKUP_INTERVAL_MINUTES):
+                    try:
+                        logger.info('Periodic cloud backup initiated (Interval: %d min)', 
+                                   config.GDRIVE_BACKUP_INTERVAL_MINUTES)
+                        trigger_cloud_backup(is_periodic=True)
+                        last_gdrive_backup_time = now_time
+                    except Exception as e:
+                        logger.error("Error in periodic cloud backup: %s", str(e))
 
     # Save Final Model
     def save_final_model(self):
@@ -2214,112 +2350,7 @@ if __name__ == "__main__":
         
         # ✅ Cloud Backup: Create summary/model archives and upload to GDrive
         if config.IS_KAGGLE or config.IS_COLAB:
-            import subprocess
-            from datetime import datetime
-            
-            env_name = "Kaggle" if config.IS_KAGGLE else "Colab"
-            working_dir = config.LOG_SUMMARY_ROOT # /kaggle/working or /content
-            
-            logger.info('')
-            logger.warning('='*60)
-            logger.warning('Creating result archives for %s...', env_name)
-            logger.warning('='*60)
-            
-            try:
-                # 1. Summary Archiving
-                summary_base = config.LOG_SUMMARY_ROOT
-                summary_dir = os.path.join(summary_base, 'summary')
-                
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                tar_path = None
-                model_tar_path = None
-
-                if os.path.exists(summary_dir):
-                    tar_filename = 'summary_{}.tar.gz'.format(timestamp)
-                    tar_path = os.path.join(working_dir, tar_filename)
-                    
-                    logger.warning('Compressing summary to: %s', tar_filename)
-                    subprocess.run(
-                        ['tar', '-czf', tar_path, '-C', summary_base, 'summary/'],
-                        capture_output=True, text=True
-                    )
-                    
-                    if os.path.exists(tar_path):
-                        file_size_bytes = os.path.getsize(tar_path)
-                        file_size_mb = file_size_bytes / (1024 * 1024)
-                        
-                        logger.warning('='*60)
-                        logger.warning('✓ Summary archive created successfully!')
-                        logger.warning('  File: %s', tar_filename)
-                        logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
-                        logger.warning('  Path: %s', tar_path)
-                        logger.warning('='*60)
-                        
-                        if config.IS_KAGGLE:
-                            logger.warning('DOWNLOAD INSTRUCTIONS:')
-                            logger.warning('1. Wait for notebook to finish execution')
-                            logger.warning('2. Click "Save Version" → "Quick Save"')
-                            logger.warning('3. Go to "Output" tab on the right')
-                            logger.warning('4. Download "%s"', tar_filename)
-                            logger.warning('='*60)
-                else:
-                    logger.warning('Summary directory not found: %s', summary_dir)
-                    
-                # 2. Models Archiving
-                model_dir = config.SAVE_MODEL_DIR
-                model_base = os.path.dirname(os.path.abspath(model_dir))
-                
-                if os.path.exists(model_dir):
-                    model_tar_filename = 'models_{}.tar.gz'.format(timestamp)
-                    model_tar_path = os.path.join(working_dir, model_tar_filename)
-                    
-                    logger.warning('Compressing models from %s to: %s', model_dir, model_tar_filename)
-                    subprocess.run(
-                        ['tar', '-czf', model_tar_path, '-C', model_base, os.path.basename(model_dir) + '/'],
-                        capture_output=True, text=True
-                    )
-                    
-                    if os.path.exists(model_tar_path):
-                        file_size_bytes = os.path.getsize(model_tar_path)
-                        file_size_mb = file_size_bytes / (1024 * 1024)
-                        
-                        logger.warning('='*60)
-                        logger.warning('✓ Model archive created successfully!')
-                        logger.warning('  File: %s', model_tar_filename)
-                        logger.warning('  Size: %.2f MB (%d bytes)', file_size_mb, file_size_bytes)
-                        logger.warning('  Path: %s', model_tar_path)
-                        logger.warning('='*60)
-                        
-                        if config.IS_KAGGLE:
-                            logger.warning('DOWNLOAD INSTRUCTIONS:')
-                            logger.warning('1. Wait for notebook to finish execution')
-                            logger.warning('2. Click "Save Version" → "Quick Save"')
-                            logger.warning('3. Go to "Output" tab on the right')
-                            logger.warning('4. Download "%s"', model_tar_filename)
-                            logger.warning('='*60)
-                else:
-                    logger.warning('Model directory not found: %s', model_dir)
-                
-                # 3. Google Drive Upload
-                if HAS_GDRIVE_UPLOADER:
-                    logger.warning('='*60)
-                    logger.warning('Attempting to upload results to Google Drive...')
-                    logger.warning('='*60)
-                    
-                    gdrive_success = upload_training_results_to_gdrive(
-                        summary_file=tar_path,
-                        model_file=model_tar_path
-                    )
-                    
-                    if gdrive_success:
-                        logger.warning('✓ Results backed up to Google Drive successfully!')
-                    else:
-                        logger.warning('⚠️ Google Drive upload skipped or failed (check credentials)')
-                
-            except Exception as e:
-                logger.error('Failed to create/upload archives: %s', str(e))
-                import traceback
-                logger.error('Traceback: %s', traceback.format_exc())
+            trigger_cloud_backup(is_periodic=False)
         
         # ✅ CRITICAL: Always cleanup
         logger.info('')
