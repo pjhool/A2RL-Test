@@ -161,6 +161,11 @@ def trigger_cloud_backup(is_periodic=True):
     """
     if not (config.IS_KAGGLE or config.IS_COLAB):
         return
+        
+    # Respect the global backup flag (e.g. for Optuna tuning where we want speed)
+    if not config.GDRIVE_BACKUP_ENABLED:
+        logger.warning('Cloud backup skipped (A2RL_GDRIVE_BACKUP_ENABLED=0)')
+        return
 
     import subprocess
     from datetime import datetime
