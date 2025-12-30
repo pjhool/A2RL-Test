@@ -1080,9 +1080,9 @@ class A3CAgent:
             latest_actor = actor_files[0]
             # Strip "_actor.h5" to get the prefix
             name = latest_actor[:-9]
-            logger.info("✓ Directory detected. Identified latest model prefix: %s", name)
+            logger.warning("✓ Directory detected. Identified latest model prefix: %s", name)
 
-        logger.info('Loading model from: %s', name)
+        logger.warning('Loading model from: %s', name)
         self.actor.load_weights(name + "_actor.h5")
         self.critic.load_weights(name + "_critic.h5")
         self._weights_loaded = True
@@ -1092,7 +1092,7 @@ class A3CAgent:
             try:
                 with open(metadata_path, 'r') as f:
                     metadata = json.load(f)
-                logger.info('Loaded metadata: %s', metadata)
+                logger.warning('Loaded metadata: %s', metadata)
                 return metadata
             except Exception as e:
                 logger.error('Failed to load metadata: %s', e)
@@ -1132,7 +1132,7 @@ class A3CAgent:
         avg_improvement = np.mean([r['improvement'] for r in results])
         avg_steps = np.mean([r['steps'] for r in results])
         
-        logger.info("\n" + "="*60 +
+        logger.warning("\n" + "="*60 +
                     "\nEvaluation Summary Report:" +
                     "\n  Total Images: {}".format(len(results)) +
                     "\n  Avg Initial Score: {:.4f}".format(avg_initial) +
@@ -2288,12 +2288,12 @@ if __name__ == "__main__":
     
     # Weight Loading Logic (Pre-training weights)
     if args.load_weights:
-        logger.info('Loading initial weights from: %s', args.load_weights)
+        logger.warning('Loading initial weights from: %s', args.load_weights)
         global_agent.initial_load_path = args.load_weights
         metadata = global_agent.load_model(args.load_weights)
         if metadata:
             episode = metadata.get('episode', 0)
-            logger.info('Continuous episode count from loaded weights: %d', episode)
+            logger.warning('Continuous episode count from loaded weights: %d', episode)
         # Progress (fold, epoch) remains at 0 unless --resume also specified
     
     # Resumption Logic (Progress + Weights)
@@ -2308,7 +2308,7 @@ if __name__ == "__main__":
                 start_epoch = 0
             
             episode = metadata.get('episode', 0)
-            logger.info('Resuming from Fold {}, Epoch {}, Episode {}'.format(start_fold + 1, start_epoch, episode))
+            logger.warning('Resuming from Fold {}, Epoch {}, Episode {}'.format(start_fold + 1, start_epoch, episode))
         else:
             logger.warning('Resume specified but metadata not found. Starting from scratch with loaded weights.')
 
