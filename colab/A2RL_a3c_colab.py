@@ -2027,19 +2027,9 @@ class Agent(threading.Thread):
                     batch_advantages = np.concatenate(self.mini_batch_buffer['advantages'], axis=0)
                     batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
                     
-                    # Advantage normalization for stability
-                    adv_mean = np.mean(batch_advantages)
-                    adv_std = np.std(batch_advantages) + 1e-8
-                    batch_advantages = (batch_advantages - adv_mean) / adv_std
-                    
                     # Perform ONE large update
                     self.optimizer[0]([batch_inputs, batch_actions, batch_advantages])
                     self.optimizer[1]([batch_inputs, batch_targets])
-                    
-                    # Diagnostic logging for advantages
-                    if episode % 100 == 0:
-                        logger.info("Training Diagnostics (Episode %d): Adv Mean: %.4f, Adv Std: %.4f", 
-                                    episode, adv_mean, adv_std)
                     
                     self.avg_loss += 0 
                     
@@ -2051,11 +2041,6 @@ class Agent(threading.Thread):
                 self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
                 raise e
         else:
-            # Advantage normalization
-            adv_mean = np.mean(advantages)
-            adv_std = np.std(advantages) + 1e-8
-            advantages = (advantages - adv_mean) / adv_std
-            
             # Standard immediate update
             self.optimizer[0]([states, np.vstack(self.actions), advantages])
             self.optimizer[1]([states, discounted_prediction])
