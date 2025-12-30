@@ -118,8 +118,8 @@ FEATURE_EPSILON = 1e-8
 ENABLE_MINI_BATCH = True
 MINI_BATCH_SIZE = 32 # Accumulate gradients over 32 steps/updates before applying
 
-# --- Save Settings ---
-SAVE_INTERVAL_MINUTES = 10
+# --- Model Save Settings ( Interval in minutes )---
+SAVE_INTERVAL_MINUTES = 20
 
 # --- Logging Settings ---
 # Frequency for diagnostic logs (feature stats, policy stats, etc.)
@@ -140,3 +140,9 @@ LOG_INTERVAL_PREPROCESSING = 500 if IS_KAGGLE else 100
 
 # --- GPU Monitoring Settings ---
 GPU_LOG_INTERVAL = 10  # Log GPU status every 10 epochs
+
+# --- Periodic Cloud Backup Settings ---
+# Enable/Disable periodic uploads to Google Drive during training
+GDRIVE_BACKUP_ENABLED = bool(int(os.environ.get('A2RL_GDRIVE_BACKUP_ENABLED', '1')))
+# Interval in minutes for periodic Google Drive backups
+GDRIVE_BACKUP_INTERVAL_MINUTES = int(os.environ.get('A2RL_GDRIVE_BACKUP_INTERVAL', '30')) 
