@@ -1065,6 +1065,23 @@ class A3CAgent:
         return train
 
     def load_model(self, name):
+        # If 'name' is a directory, find the latest model in it
+        if os.path.isdir(name):
+            import glob
+            # Find all actor weight files in the directory
+            actor_files = glob.glob(os.path.join(name, "*_actor.h5"))
+            if not actor_files:
+                # Try subdirectories if not found in root (optional, but keep it simple for now)
+                logger.error("No model weights (*_actor.h5) found in directory: %s", name)
+                return None
+            
+            # Sort by modification time (newest first)
+            actor_files.sort(key=os.path.getmtime, reverse=True)
+            latest_actor = actor_files[0]
+            # Strip "_actor.h5" to get the prefix
+            name = latest_actor[:-9]
+            logger.info("✓ Directory detected. Identified latest model prefix: %s", name)
+
         logger.info('Loading model from: %s', name)
         self.actor.load_weights(name + "_actor.h5")
         self.critic.load_weights(name + "_critic.h5")
