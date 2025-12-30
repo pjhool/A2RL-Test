@@ -2368,7 +2368,7 @@ if __name__ == "__main__":
                         for f in os.listdir(train_path) 
                         if os.path.isfile(os.path.join(train_path, f))]
             all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
-            random.shuffle(all_files)
+            #random.shuffle(all_files)
             logger.info('all_files len: %d', len(all_files))
             test_files = all_files[:30]
             global_agent.evaluate(test_files)
