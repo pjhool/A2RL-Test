@@ -2277,6 +2277,13 @@ if __name__ == "__main__":
                    os.environ.get('A2RL_MIN_STEPS', 'DEFAULT'), config.MIN_STEPS)
     logger.warning("  A2RL_BETA:        %s (Current: %.4f)", 
                    os.environ.get('A2RL_BETA', 'DEFAULT'), config.BETA)
+    logger.warning("  A2RL_BATCH_SIZE:  %s (Current: %d)",
+                   os.environ.get('A2RL_BATCH_SIZE', 'DEFAULT'), config.BATCH_SIZE)
+    logger.warning("  A2RL_THREADS:     %s (Current: %d)",
+                   os.environ.get('A2RL_THREADS', 'DEFAULT'), config.THREADS)
+    logger.warning("  A2RL_T_MAX:       %s (Current: %d)",
+                   os.environ.get('A2RL_T_MAX', 'DEFAULT'), config.T_MAX)
+    logger.warning("  CONSOLE_LOG:      %s", os.environ.get('A2RL_CONSOLE_LOG_LEVEL', 'DEFAULT'))
     logger.warning("="*60)
 
     global_agent = A3CAgent(action_size=config.ACTION_SIZE)

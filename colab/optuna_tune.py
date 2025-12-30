@@ -29,17 +29,19 @@ def objective(trial):
     env['A2RL_BETA'] = str(beta)
     
     # Additional User Configuration
+    """
     env['A2RL_BATCH_SIZE'] = '8'
     env['A2RL_THREADS'] = '8'
     env['A2RL_T_MAX'] = '50'
     env['A2RL_CONSOLE_LOG_LEVEL'] = 'WARNING'
-    
+    """
     # Speed up trials: Reduce epochs and episodes for faster feedback
     env['A2RL_EPOCH_SIZE'] = '50'        # Reduce from 200 to 50
     env['A2RL_MAX_EPISODES'] = '2000'    # Reduce from 20000 to 2000
     env['A2RL_GDRIVE_BACKUP_ENABLED'] = '0' # Disable backups for speed
     
     logger.info(f"Trial {trial.number}: Starting training with STOP_REWARD={stop_reward}, MIN_STEPS={min_steps}, BETA={beta}")
+    logger.info(f"  Fixed Config: BATCH_SIZE={env['A2RL_BATCH_SIZE']}, THREADS={env['A2RL_THREADS']}, T_MAX={env['A2RL_T_MAX']}, LOG_LEVEL={env['A2RL_CONSOLE_LOG_LEVEL']}")
     
     # 3. Run Training Script as Subprocess
     try:
