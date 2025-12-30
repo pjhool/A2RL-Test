@@ -56,7 +56,7 @@ ALEXNET_NPY = os.path.join(DRIVE_ROOT, 'alexnet.npy')
 ACTOR_LR = 1.0e-4
 CRITIC_LR = 1.0e-4
 DISCOUNT_FACTOR = 0.99
-BETA = 0.05
+BETA = 0.1
 
 # Environment variable support for runtime configuration
 THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Colab usually gives 2 cores
@@ -109,14 +109,14 @@ POOLING = 'max'
 ACTION_SIZE = 14
 
 # --- Feature Scaling Settings ---
-ENABLE_FEATURE_SCALING = False
+ENABLE_FEATURE_SCALING = True
 FEATURE_SCALING_METHOD = 'global'
 FEATURE_STATS_PATH = DRIVE_ROOT + '/feature_stats.json'
 FEATURE_EPSILON = 1e-8
 
 # --- Mini-Batch Training Settings ---
 ENABLE_MINI_BATCH = True
-MINI_BATCH_SIZE = 32 # Accumulate gradients over 32 steps/updates before applying
+MINI_BATCH_SIZE = 8 # Accumulate gradients over 8 updates for faster iteration
 
 # --- Model Save Settings ( Interval in minutes )---
 SAVE_INTERVAL_MINUTES = 20
