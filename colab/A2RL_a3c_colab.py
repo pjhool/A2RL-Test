@@ -1583,7 +1583,7 @@ class Agent(threading.Thread):
             logger.debug('Reward: %.4f', reward)
             
             # Policy maximum
-            self.avg_p_max += np.amax(self.actor.predict(np.float32(history)))
+            self.avg_p_max += np.amax(self.actor.predict_on_batch(np.float32(history)))
             
             score += reward
             
@@ -1815,7 +1815,7 @@ class Agent(threading.Thread):
             history = np.expand_dims(observe, axis=0) # [1, 2000]
             
             # Get action from actor
-            policy = self.actor.predict(history)[0]
+            policy = self.actor.predict_on_batch(history)[0]
             action_index = np.argmax(policy)
             
             # Diagnostic: Log policy every step during evaluation
@@ -1983,7 +1983,7 @@ class Agent(threading.Thread):
         running_add = 0
 
         if not done:
-            running_add = self.critic.predict(np.float32(
+            running_add = self.critic.predict_on_batch(np.float32(
                 self.states[-1] ))[0]
 
         for t in reversed(range(0, len(rewards))):
@@ -2002,7 +2002,7 @@ class Agent(threading.Thread):
 
         states = np.float32(states )
 
-        values = self.critic.predict(states)
+        values = self.critic.predict_on_batch(states)
         values = np.reshape(values, len(values))
 
         advantages = discounted_prediction - values
