@@ -1598,7 +1598,7 @@ class Agent(threading.Thread):
                 done = True
             
             # Train model
-            if self.t % self.t_max or done:
+            if self.t % self.t_max == 0 or done:
                 self.train_model(done)
                 self.update_local_model()
             
