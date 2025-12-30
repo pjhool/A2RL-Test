@@ -92,7 +92,7 @@ if __name__ == "__main__":
     # Optimize
     # n_trials: Number of trials to run. Adjust based on available time.
     logger.info("Starting Optuna optimization...")
-    study.optimize(objective, n_trials=10) # Start with 10 trials for demonstration
+    study.optimize(objective, n_trials=20) # Start with 10 trials for demonstration
     
     # Report Results
     logger.info("Optimization finished.")
