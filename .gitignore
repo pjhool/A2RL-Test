@@ -1,1 +1,40 @@
+# System files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.DS_Store
+Thumbs.db
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# Logs and Data
+logs/
+summary/
+results/
+*.log
+*.csv
+
+# Large Models and Weights
+a2rl_model/
+save_model/
+*.data-*-of-*
+*.index
+*.meta
+*.pb
+*.ckpt
+checkpoint
 vfn_rl.pkl
+alexnet.npy
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# IDEs
+.vscode/
+.idea/
