@@ -1543,8 +1543,8 @@ class Agent(threading.Thread):
             ratios, terminals = command2action([action], ratios, terminals)
             
             # FIX: If we forced continue (ignored STOP), we must reset terminal flag
-            if action == 13 and step < config.MIN_STEPS:
-                terminals[0] = 0
+            # if action == 13 and step < config.MIN_STEPS:
+            #     terminals[0] = 0
             
             logger.debug('Ratios: %s', ratios)
             

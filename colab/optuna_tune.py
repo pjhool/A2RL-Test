@@ -30,7 +30,7 @@ def objective(trial):
     min_steps = trial.suggest_int('A2RL_MIN_STEPS', 3, 10)
     
     # Fixed Reward Scale
-    reward_scale = 3.0
+    reward_scale = 1.0
     
     # 2. Setup Environment Variables for this Trial
     env = os.environ.copy()
@@ -95,9 +95,18 @@ def objective(trial):
         avg_steps = float(steps_match.group(1)) if steps_match else 0.0
         
         if score_match and imp_match:
-            logger.warning(f"Trial {trial.number} Result: Improvement={improvement:.4f}, Score={final_score:.4f}, Steps={avg_steps:.1f}")
-            logger.warning(f"  Params: STOP={stop_reward}, MIN={min_steps}, BETA={beta:.4f}, SCALE={reward_scale}")
-            return improvement # Optimize for Improvement
+            # Multi-objective: Improvement maximize + Steps validity penalty
+            step_penalty_score = 0.0
+            if avg_steps < 5:
+                step_penalty_score = -0.5 * (5 - avg_steps)
+            elif avg_steps > 20:
+                step_penalty_score = -0.2 * (avg_steps - 20)
+                
+            final_composite_score = improvement + step_penalty_score
+            
+            logger.warning(f"Trial {trial.number} Result: Composite={final_composite_score:.4f} (Imp={improvement:.4f}, Steps={avg_steps:.1f}, StepPenalty={step_penalty_score:.4f})")
+            logger.warning(f"  Params: STOP={stop_reward}, MIN={min_steps}, BETA={beta:.4f}, SCALE={reward_scale}, PENALTY={step_penalty:.4f}")
+            return final_composite_score
 
         else:
             logger.error(f"Trial {trial.number} failed to produce a score. Output excerpt:\n{output[-500:]}")
