@@ -2038,12 +2038,11 @@ class Agent(threading.Thread):
                     batch_advantages = np.concatenate(self.mini_batch_buffer['advantages'], axis=0)
                     batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
                     
-<<<<<<< HEAD
+
                     # Advantage Normalization (Mini-Batch)
                     batch_advantages = (batch_advantages - np.mean(batch_advantages)) / (np.std(batch_advantages) + 1e-8)
                     
-=======
->>>>>>> 09f5f8b83fc010439be05add54d102af4cb55312
+
                     # Perform ONE large update
                     self.optimizer[0]([batch_inputs, batch_actions, batch_advantages])
                     self.optimizer[1]([batch_inputs, batch_targets])
@@ -2059,12 +2058,11 @@ class Agent(threading.Thread):
                 raise e
         else:
             # Standard immediate update
-<<<<<<< HEAD
+<
             # Advantage Normalization (Immediate)
             advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
             
-=======
->>>>>>> 09f5f8b83fc010439be05add54d102af4cb55312
+
             self.optimizer[0]([states, np.vstack(self.actions), advantages])
             self.optimizer[1]([states, discounted_prediction])
 
