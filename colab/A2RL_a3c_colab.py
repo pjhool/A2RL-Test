@@ -1575,10 +1575,9 @@ class Agent(threading.Thread):
                 # Strengthen reward signal: use sign * 5.0 for clear direction
                 # but keep magnitude for relative quality.
                 # 스케일 계수 (10.0) 조정으로 보상 크기 조절
-                reward_score_improvement = score_diff * 10.0          
-                reward = reward_score_improvement  - self.step_penalty * (self.t + 1)
-                # 이전  코드 
-                #reward = (np.sign(score_diff) )  - self.step_penalty * (self.t + 1)
+                reward_continuous = score_diff * config.REWARD_SCALE
+                reward_clipped = np.clip(reward_continuous, config.REWARD_CLIP_MIN, config.REWARD_CLIP_MAX)
+                reward = reward_clipped - self.step_penalty * (self.t + 1)
                 
                 # Check Aspect Ratio with validation
                 is_valid, asratio, penalty = validate_aspect_ratio(bbox)
@@ -2036,6 +2035,9 @@ class Agent(threading.Thread):
                     batch_advantages = np.concatenate(self.mini_batch_buffer['advantages'], axis=0)
                     batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
                     
+                    # Advantage Normalization (Mini-Batch)
+                    batch_advantages = (batch_advantages - np.mean(batch_advantages)) / (np.std(batch_advantages) + 1e-8)
+                    
                     # Perform ONE large update
                     self.optimizer[0]([batch_inputs, batch_actions, batch_advantages])
                     self.optimizer[1]([batch_inputs, batch_targets])
@@ -2051,6 +2053,9 @@ class Agent(threading.Thread):
                 raise e
         else:
             # Standard immediate update
+            # Advantage Normalization (Immediate)
+            advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
+            
             self.optimizer[0]([states, np.vstack(self.actions), advantages])
             self.optimizer[1]([states, discounted_prediction])
 
