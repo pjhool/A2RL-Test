@@ -1576,10 +1576,13 @@ class Agent(threading.Thread):
                 # but keep magnitude for relative quality.
                 # 스케일 계수 (10.0) 조정으로 보상 크기 조절
 
-                reward_score_improvement = score_diff * 10.0          
-                reward = reward_score_improvement  - self.step_penalty * (self.t + 1)
-                # 이전  코드 
-                #reward = (np.sign(score_diff) )  - self.step_penalty * (self.t + 1)
+                REWARD_SCALE = config.REWARD_SCALE
+                REWARD_CLIP_MIN = config.REWARD_CLIP_MIN
+                REWARD_CLIP_MAX = config.REWARD_CLIP_MAX
+   
+                reward_continuous = score_diff * REWARD_SCALE
+                reward_clipped = np.clip(reward_continuous, REWARD_CLIP_MIN, REWARD_CLIP_MAX)
+                reward = reward_clipped - self.step_penalty * (self.t + 1)
 
                 
                 # Check Aspect Ratio with validation
@@ -2058,7 +2061,6 @@ class Agent(threading.Thread):
                 raise e
         else:
             # Standard immediate update
-<
             # Advantage Normalization (Immediate)
             advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
             
