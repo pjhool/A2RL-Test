@@ -954,16 +954,9 @@ class A3CAgent:
 
         input = Input(shape = self.state_size )
 
-        fc1 = Dense(1024, activation = 'relu') (input)
-        #drop1 = Dropout(drop_ratio)(fc1)
-
-        fc2 = Dense(1024, activation='relu')(fc1)
-        #drop2 = Dropout(drop_ratio)(fc2)
-
-        fc3 = Dense(1024, activation='relu')(fc2)
-        #drop3 = Dropout(drop_ratio)(fc3)
-
-        lstm1 = LSTM(1024)( fc3)
+        # Option B: Lightweight Network (Dense 256 -> LSTM 256)
+        fc1 = Dense(256, activation='relu')(input)
+        lstm1 = LSTM(256)(fc1)
         #drop4 = Dropout(drop_ratio)(lstm1)
 
         policy = Dense(self.action_size, activation='softmax')(lstm1)
@@ -2097,20 +2090,11 @@ class Agent(threading.Thread):
                     
             K.set_learning_phase(1)  # set learning phase
 
-            input = Input(shape=self.state_size)
+        input = Input(shape=self.state_size)
 
-        #input = Input(shape=( 1 , 2000  ))
-        fc1 = Dense(1024, activation = 'relu') (input)
-        #drop1 = Dropout(drop_ratio)(fc1)
-
-        fc2 = Dense(1024, activation='relu')(fc1)
-        #drop2 = Dropout(drop_ratio)(fc2)
-
-        fc3 = Dense(1024, activation='relu')(fc2)
-        #drop3 = Dropout(drop_ratio)(fc3)
-
-        lstm1 = LSTM(1024)( fc3)
-        #drop4 = Dropout(drop_ratio)(lstm1)
+        # Option B: Lightweight Network (Dense 256 -> LSTM 256)
+        fc1 = Dense(256, activation='relu')(input)
+        lstm1 = LSTM(256)(fc1)
 
         policy = Dense(self.action_size, activation='softmax')(lstm1)
         value = Dense(1, activation='linear')(lstm1)
