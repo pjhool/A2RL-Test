@@ -18,20 +18,27 @@ def objective(trial):
     Optuna objective function to optimize A2RL hyperparameters.
     """
     # 1. Suggest Hyperparameters
-    stop_reward = trial.suggest_float('A2RL_STOP_REWARD', -1.0, 0.0, step=0.1)
-    min_steps = trial.suggest_int('A2RL_MIN_STEPS', 3, 5)
-    beta = trial.suggest_float('A2RL_BETA', 0.01, 0.2, log=True)
-
-    reward_scale = trial.suggest_float('A2RL_REWARD_SCALE', 1.0, 20.0, step=1.0)
-
+    # User Request:
+    # beta = trial.suggest_float('beta', 0.01, 0.3, log=True)
+    # stop_reward = trial.suggest_float('stop_reward', -10.0, -0.5)
+    # step_penalty = trial.suggest_float('step_penalty', 0.0, 0.1)
+    # min_steps = trial.suggest_int('min_steps', 3, 10)
+    
+    beta = trial.suggest_float('A2RL_BETA', 0.01, 0.3, log=True)
+    stop_reward = trial.suggest_float('A2RL_STOP_REWARD', -10.0, -0.5)
+    step_penalty = trial.suggest_float('A2RL_STEP_PENALTY', 0.0, 0.1)
+    min_steps = trial.suggest_int('A2RL_MIN_STEPS', 3, 10)
+    
+    # Fixed Reward Scale
+    reward_scale = 3.0
     
     # 2. Setup Environment Variables for this Trial
     env = os.environ.copy()
     env['A2RL_STOP_REWARD'] = str(stop_reward)
     env['A2RL_MIN_STEPS'] = str(min_steps)
     env['A2RL_BETA'] = str(beta)
-
     env['A2RL_REWARD_SCALE'] = str(reward_scale)
+    env['A2RL_STEP_PENALTY'] = str(step_penalty)
 
     
     # Additional User Configuration

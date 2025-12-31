@@ -1558,9 +1558,10 @@ class Agent(threading.Thread):
             new_scores, new_features = evaluate_aesthetics_score_resized(img)
             
             logger.debug('New scores: %s', new_scores)
-            
             # Calculate reward
             score_diff = new_scores[0] - local_score
+            
+            logger.info("Step %d Action %d: Prev=%.4f, New=%.4f, Diff=%.4f", step, action, local_score, new_scores[0], score_diff)
             
             if action == 13:
                 # Penalty for stopping too early
