@@ -28,7 +28,7 @@ def objective(trial):
     
     # Fixed Reward Scale, Step Penalty, and Min Steps
     reward_scale = 1.0
-    step_penalty = 0.005
+    step_penalty = 0.0005
     min_steps = 5
     
     # 2. Setup Environment Variables for this Trial
