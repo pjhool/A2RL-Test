@@ -26,7 +26,7 @@ Contact: Hui-Kai Wu (huikaiwu@icloud.com)
 git clone https://github.com/wuhuikai/TF-A2RL.git
 cd TF-A2RL
 ```
-* Download the pretrained models `vfn_rl.pk` from [Google Drive](https://drive.google.com/open?id=0Bybnpq8dvwudREJnRWhFbk1rYW8), then put them in current directory (`TF-A2RL/`).
+* Download the pretrained models `vfn_rl.pk` from [Google Drive](https://drive.google.com/file/d/181rGRJfUdEJl4LVD3Eqy8xeSFzVt6bJv/view?usp=sharing), then put them in current directory (`TF-A2RL/`).
 
 * Run the python script:
 ``` bash
