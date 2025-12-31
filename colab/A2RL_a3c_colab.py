@@ -1523,7 +1523,7 @@ class Agent(threading.Thread):
             
             if action == 13:
                 if step < config.MIN_STEPS:
-                    done = True
+                    done = True 
                     logger.info('Action 13 (STOP) ignored (step %d < %d)', step, config.MIN_STEPS)
                 else:
                     done = True
@@ -1580,7 +1580,7 @@ class Agent(threading.Thread):
                 # Check Aspect Ratio with validation
                 is_valid, asratio, penalty = validate_aspect_ratio(bbox)
                 
-                if not is_valid:
+                if not is_valid :
                     logger.debug('Invalid aspect ratio: %.2f (penalty: %.1f)', asratio, penalty)
                     reward = reward - penalty
                 else:
@@ -2034,8 +2034,8 @@ class Agent(threading.Thread):
                     batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
                     
 
-                    # Advantage Normalization (Mini-Batch)
-                    batch_advantages = (batch_advantages - np.mean(batch_advantages)) / (np.std(batch_advantages) + 1e-8)
+                    # Advantage Normalization removed per user request
+                    # batch_advantages = (batch_advantages - np.mean(batch_advantages)) / (np.std(batch_advantages) + 1e-8)
                     
 
                     # Perform ONE large update
@@ -2053,8 +2053,8 @@ class Agent(threading.Thread):
                 raise e
         else:
             # Standard immediate update
-            # Advantage Normalization (Immediate)
-            advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
+            # Advantage Normalization removed per user request
+            # advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
             
 
             self.optimizer[0]([states, np.vstack(self.actions), advantages])
