@@ -44,7 +44,7 @@ def objective(trial):
     # Speed up trials: Reduce epochs and episodes for faster feedback
     env['A2RL_EPOCH_SIZE'] = '50'        # Reduce from 200 to 50
 
-    env['A2RL_MAX_EPISODES'] = '5000'    # Increase to 5000 for better convergence
+    #env['A2RL_MAX_EPISODES'] = '5000'    # Increase to 5000 for better convergence
     env['A2RL_GDRIVE_BACKUP_ENABLED'] = '0' # Disable backups for speed
     
     logger.info(f"Trial {trial.number}: Starting training with MIN_STEPS={min_steps}, BETA={beta}, SCALE={reward_scale}")
