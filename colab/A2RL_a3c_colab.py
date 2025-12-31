@@ -1523,7 +1523,7 @@ class Agent(threading.Thread):
             
             if action == 13:
                 if step < config.MIN_STEPS:
-                    done = False
+                    done = True
                     logger.info('Action 13 (STOP) ignored (step %d < %d)', step, config.MIN_STEPS)
                 else:
                     done = True
