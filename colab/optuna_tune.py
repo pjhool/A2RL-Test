@@ -25,16 +25,14 @@ def objective(trial):
     # min_steps = trial.suggest_int('min_steps', 3, 10)
     
     beta = trial.suggest_float('A2RL_BETA', 0.01, 0.3, log=True)
-    stop_reward = trial.suggest_float('A2RL_STOP_REWARD', -10.0, -0.5)
-    step_penalty = trial.suggest_float('A2RL_STEP_PENALTY', 0.0, 0.1)
-    min_steps = trial.suggest_int('A2RL_MIN_STEPS', 3, 10)
     
-    # Fixed Reward Scale
+    # Fixed Reward Scale, Step Penalty, and Min Steps
     reward_scale = 1.0
+    step_penalty = 0.02
+    min_steps = 5
     
     # 2. Setup Environment Variables for this Trial
     env = os.environ.copy()
-    env['A2RL_STOP_REWARD'] = str(stop_reward)
     env['A2RL_MIN_STEPS'] = str(min_steps)
     env['A2RL_BETA'] = str(beta)
     env['A2RL_REWARD_SCALE'] = str(reward_scale)
@@ -49,7 +47,7 @@ def objective(trial):
     #env['A2RL_MAX_EPISODES'] = '3000'    # Increase to 5000 for better convergence
     env['A2RL_GDRIVE_BACKUP_ENABLED'] = '0' # Disable backups for speed
     
-    logger.info(f"Trial {trial.number}: Starting training with STOP_REWARD={stop_reward}, MIN_STEPS={min_steps}, BETA={beta}, SCALE={reward_scale}")
+    logger.info(f"Trial {trial.number}: Starting training with MIN_STEPS={min_steps}, BETA={beta}, SCALE={reward_scale}")
 
     logger.info(f"  Fixed Config: BATCH_SIZE={env['A2RL_BATCH_SIZE']}, THREADS={env['A2RL_THREADS']}, T_MAX={env['A2RL_T_MAX']}, LOG_LEVEL={env['A2RL_CONSOLE_LOG_LEVEL']}")
     
@@ -105,7 +103,7 @@ def objective(trial):
             final_composite_score = improvement + step_penalty_score
             
             logger.warning(f"Trial {trial.number} Result: Composite={final_composite_score:.4f} (Imp={improvement:.4f}, Steps={avg_steps:.1f}, StepPenalty={step_penalty_score:.4f})")
-            logger.warning(f"  Params: STOP={stop_reward}, MIN={min_steps}, BETA={beta:.4f}, SCALE={reward_scale}, PENALTY={step_penalty:.4f}")
+            logger.warning(f"  Params: MIN={min_steps}, BETA={beta:.4f}, SCALE={reward_scale}, PENALTY={step_penalty:.4f}")
             return final_composite_score
 
         else:
@@ -124,6 +122,13 @@ def objective(trial):
 if __name__ == "__main__":
     # Create Study
     study = optuna.create_study(direction="maximize")
+    
+    # User Request: Tune Beta from high to low (Prioritize Exploration)
+    # Enqueue specific Beta values to try first
+    study.enqueue_trial({'A2RL_BETA': 0.3})
+    study.enqueue_trial({'A2RL_BETA': 0.1})
+    study.enqueue_trial({'A2RL_BETA': 0.05})
+    study.enqueue_trial({'A2RL_BETA': 0.01})
     
     # Optimize
     # n_trials: Number of trials to run. Adjust based on available time.

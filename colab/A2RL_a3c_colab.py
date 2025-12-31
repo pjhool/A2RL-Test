@@ -1564,14 +1564,12 @@ class Agent(threading.Thread):
             logger.info("Step %d Action %d: Prev=%.4f, New=%.4f, Diff=%.4f", step, action, local_score, new_scores[0], score_diff)
             
             if action == 13:
-                # Penalty for stopping too early
+                reward = 0.0
                 if step < config.MIN_STEPS:
-                    reward = config.STOP_REWARD
-                    logger.info('Action 13 (STOP) triggered too early (step %d < %d) - Penalty: %.4f', 
+                     logger.info('Action 13 (STOP) triggered early (step %d < %d) - Reward: %.4f', 
                                 step, config.MIN_STEPS, reward)
                 else:
-                    reward = 0.0
-                    logger.info('Action 13 (STOP) - Reward set to 0')
+                    logger.info('Action 13 (STOP) - Reward set to 0.0')
             else:
                 # Strengthen reward signal: use sign * 5.0 for clear direction
                 # but keep magnitude for relative quality.
