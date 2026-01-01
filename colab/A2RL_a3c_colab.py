@@ -778,12 +778,37 @@ class A3CAgent:
         """
         Calculate aesthetic scores for all images in the dataset.
         Used for Curriculum Learning (sorting by difficulty).
+        Results are cached to avoid redundant processing.
         """
+        cache_path = os.path.join(config.DRIVE_ROOT if config.IS_COLAB else '.', 'curriculum_scores.json')
+        
+        # Try to load from cache first
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, 'r') as f:
+                    cached_data = json.load(f)
+                    
+                # Verify if cache is valid for CURRENT file_list
+                # We check if all files in file_list have scores in the cache
+                scores_dict = cached_data.get('scores', {})
+                if all(f in scores_dict for f in file_list):
+                    logger.warning('CURRICULUM LEARNING: Loading scores from cache: %s', cache_path)
+                    scored_files = [(f, scores_dict[f]) for f in file_list]
+                    scored_files.sort(key=lambda x: x[1])
+                    sorted_list = [x[0] for x in scored_files]
+                    logger.warning('Loaded %d scores from cache.', len(sorted_list))
+                    return sorted_list
+                else:
+                    logger.warning('CURRICULUM LEARNING: Cache is incomplete or for a different dataset. Re-scoring...')
+            except Exception as e:
+                logger.warning('CURRICULUM LEARNING: Failed to load cache (%s). Re-scoring...', e)
+        
         logger.warning('='*60)
         logger.warning('CURRICULUM LEARNING: Pre-scoring dataset...')
         logger.warning('='*60)
         
         scored_files = []
+        scores_for_cache = {}
         total = len(file_list)
         
         # Process in batches for efficiency
@@ -816,10 +841,19 @@ class A3CAgent:
                         scores, _ = evaluate_aesthetics_score_resized(batch_images)
                         for f, score in zip(valid_batch_files, scores):
                             scored_files.append((f, score))
+                            scores_for_cache[f] = float(score)  # Store for JSON
             
             if (i + 1) % 5 == 0 or i == num_batches - 1:
                 logger.warning('Scored %d/%d images...', len(scored_files), total)
         
+        # Save results to cache
+        try:
+            with open(cache_path, 'w') as f:
+                json.dump({'scores': scores_for_cache, 'timestamp': datetime.now().isoformat()}, f, indent=4)
+            logger.warning('CURRICULUM LEARNING: Saved scores to cache: %s', cache_path)
+        except Exception as e:
+            logger.warning('CURRICULUM LEARNING: Failed to save cache: %s', e)
+
         # Sort by score: low to high (Curriculum Learning)
         scored_files.sort(key=lambda x: x[1])
         sorted_list = [x[0] for x in scored_files]
