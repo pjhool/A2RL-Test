@@ -2323,7 +2323,7 @@ if __name__ == "__main__":
     script_start_time = time.time()
     parser = argparse.ArgumentParser(description='A2RL Training')
     parser.add_argument('--resume', type=str, help='Path to model snapshot for resumption (including metadata, fold, epoch)')
-    parser.add_argument('--load_weights', type=str, help='Path to model weights to load as initial values (metadata ignored)')
+    parser.add_argument('--load_weights', type=str, default=config.LOAD_WEIGHTS, help='Path to model weights to load as initial values (metadata ignored)')
     parser.add_argument('--evaluate', type=str, help='Path to model snapshot for evaluation (excluding extensions)')
     parser.add_argument('--preprocess', action='store_true', help='Preprocess dataset (filter images by score)')
     parser.add_argument('--workers', type=int, help='Number of worker processes for preprocessing')
