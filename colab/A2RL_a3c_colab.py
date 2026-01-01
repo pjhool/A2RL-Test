@@ -774,6 +774,64 @@ class A3CAgent:
 
 
 
+    def _get_dataset_scores(self, file_list, train_path):
+        """
+        Calculate aesthetic scores for all images in the dataset.
+        Used for Curriculum Learning (sorting by difficulty).
+        """
+        logger.warning('='*60)
+        logger.warning('CURRICULUM LEARNING: Pre-scoring dataset...')
+        logger.warning('='*60)
+        
+        scored_files = []
+        total = len(file_list)
+        
+        # Process in batches for efficiency
+        batch_size = config.PREPROCESS_BATCH_SIZE
+        num_batches = (total + batch_size - 1) // batch_size
+        
+        for i in range(num_batches):
+            start_idx = i * batch_size
+            end_idx = min(start_idx + batch_size, total)
+            batch_files = file_list[start_idx:end_idx]
+            
+            batch_images = []
+            valid_batch_files = []
+            
+            for f in batch_files:
+                filepath = os.path.join(train_path, f)
+                img, error = load_and_validate_image(filepath)
+                if not error:
+                    # Resize for VFN scoring
+                    img_vfn = img.astype(np.float32) / 255
+                    img_resized = transform.resize(img_vfn, (227, 227)) - 0.5
+                    batch_images.append(img_resized)
+                    valid_batch_files.append(f)
+                else:
+                    logger.debug('Skipping %s during pre-scoring: %s', f, error)
+            
+            if batch_images:
+                with a3c_graph.as_default():
+                    with self.sess.as_default():
+                        scores, _ = evaluate_aesthetics_score_resized(batch_images)
+                        for f, score in zip(valid_batch_files, scores):
+                            scored_files.append((f, score))
+            
+            if (i + 1) % 5 == 0 or i == num_batches - 1:
+                logger.warning('Scored %d/%d images...', len(scored_files), total)
+        
+        # Sort by score: low to high (Curriculum Learning)
+        scored_files.sort(key=lambda x: x[1])
+        sorted_list = [x[0] for x in scored_files]
+        
+        logger.warning('Pre-scoring complete. Sorted %d images.', len(sorted_list))
+        if len(sorted_list) > 0:
+            logger.warning('Lowest score: %.4f (%s)', scored_files[0][1], sorted_list[0])
+            logger.warning('Highest score: %.4f (%s)', scored_files[-1][1], sorted_list[-1])
+        
+        return sorted_list
+
+
     # 쓰레드를 만들어 학습을 하는 함수
     def train(self, train_path=None, start_fold=0, start_epoch=0):
         self.start_time = time.time()
@@ -782,12 +840,40 @@ class A3CAgent:
         if train_path is None:
             train_path = config.TRAIN_PATH
             
+        # Get all valid training files
+        all_files = [f for f in os.listdir(train_path) if os.path.isfile(os.path.join(train_path, f))]
+        train_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+        
+        # Curriculum Learning: Pre-score and sort
+        if config.CURRICULUM_LEARNING:
+            train_files = self._get_dataset_scores(train_files, train_path)
+        else:
+            random.shuffle(train_files)
+            logger.info('Shuffled dataset (Curriculum Learning disabled)')
+
         if config.USE_K_FOLD:
             logger.info('Starting K-fold cross-validation (K={}) using path: {}'.format(config.K_FOLDS, train_path))
-            splits = get_k_fold_splits(train_path, config.K_FOLDS)
+            # Pass already filtered/sorted files to get_k_fold_splits if we want to maintain order 
+            # within folds, but K-fold usually shuffles. 
+            # For simplicity, we'll re-implement split logic here if curriculum is on
+            if config.CURRICULUM_LEARNING:
+                # Custom split to maintain sorted order within folds
+                fold_size = len(train_files) // config.K_FOLDS
+                splits = []
+                for i in range(config.K_FOLDS):
+                    if i == config.K_FOLDS - 1:
+                        val_files = train_files[i * fold_size:]
+                    else:
+                        val_files = train_files[i * fold_size : (i + 1) * fold_size]
+                    
+                    train_f = [f for f in train_files if f not in val_files]
+                    splits.append((train_f, val_files))
+            else:
+                splits = get_k_fold_splits(train_path, config.K_FOLDS)
             
-            for fold_idx, (train_files, val_files) in enumerate(splits):
+            for fold_idx, (train_files_fold, val_files_fold) in enumerate(splits):
                 logger.info('=== Fold {}/{} ==='.format(fold_idx + 1, config.K_FOLDS))
+                # ... weights reloading ...
                 
                 # Reset model weights for every fold
                 if self.initial_load_path:
@@ -804,8 +890,8 @@ class A3CAgent:
                 agents = []
                 for i in range(self.threads):
                     # Distribute files among threads using slicing
-                    agent_train_files = train_files[i::self.threads]
-                    agent_val_files = val_files[i::self.threads] if val_files else None
+                    agent_train_files = train_files_fold[i::self.threads]
+                    agent_val_files = val_files_fold[i::self.threads] if val_files_fold else None
                     
                     logger.info('Thread %d: allocated %d training images', i, len(agent_train_files))
                     
@@ -864,6 +950,7 @@ class A3CAgent:
                              [self.summary_op, self.summary_placeholders,
                               self.update_ops, self.summary_writer],
                              train_path=train_path,
+                             train_files=train_files[i::self.threads], # Pass sorted slice
                              start_epoch=start_epoch,
                              current_fold=0,
                              thread_id=i,
@@ -1987,8 +2074,12 @@ class Agent(threading.Thread):
             
             # Shuffle the dataset at the start of each epoch for better generalization
             if train_list is not None:
-                random.shuffle(train_list)
-                logger.info('Thread %d: Shuffled training dataset for epoch %d', self.thread_id, epoch_step)
+                if config.CURRICULUM_LEARNING:
+                    logger.info('Thread %d: Curriculum learning active - maintaining score-sorted order for epoch %d', 
+                                self.thread_id, epoch_step)
+                else:
+                    random.shuffle(train_list)
+                    logger.info('Thread %d: Shuffled training dataset for epoch %d', self.thread_id, epoch_step)
             
             # num_batches processes images in batches
             # Calculate specifically based on current list size

@@ -57,7 +57,8 @@ ACTOR_LR = 1.5e-5
 CRITIC_LR = 1.5e-5
 DISCOUNT_FACTOR = 0.99
 #BETA = 0.1
-BETA = float(os.environ.get('A2RL_BETA', '0.05'))
+BETA = float(os.environ.get('A2RL_BETA', '0.15'))
+CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '1'))) # 1=True, Sort by score low to high
 
 # Environment variable support for runtime configuration
 THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Colab usually gives 2 cores
