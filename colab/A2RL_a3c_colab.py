@@ -952,12 +952,19 @@ class A3CAgent:
             except Exception:
                 pass
 
-        input = Input(shape = self.state_size )
+        # STATEFUL LSTM ARCHITECTURE
+        # batch_shape=(batch_size, timesteps, features)
+        # batch_size=1: Required for stateful LSTM (fixed batch size)
+        # timesteps=1: Single observation per forward pass
+        # features=2000: Global (1000) + Local (1000) features
+        input = Input(batch_shape=(1, 1, 2000))
 
-        # Option B: Lightweight Network (Dense 256 -> LSTM 256)
+        # Dense layer processes current observation
         fc1 = Dense(256, activation='relu')(input)
-        lstm1 = LSTM(256)(fc1)
-        #drop4 = Dropout(drop_ratio)(lstm1)
+        
+        # Stateful LSTM maintains hidden state across steps within episode
+        # This enables temporal context learning and episode coherence
+        lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
 
         policy = Dense(self.action_size, activation='softmax')(lstm1)
         value = Dense(1, activation='linear')(lstm1)
@@ -971,8 +978,9 @@ class A3CAgent:
         if hasattr(critic, '_make_predict_function'):
             critic._make_predict_function()
 
-        # actor.summary()
-        # critic.summary()
+        logger.info("Built stateful LSTM models - Actor & Critic")
+        logger.info("  Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000")
+        logger.info("  LSTM maintains state across episode steps for temporal learning")
 
         return actor, critic
 
@@ -1398,6 +1406,13 @@ class Agent(threading.Thread):
         
         step = 0
         self.t = 0
+        
+        # CRITICAL: Reset LSTM states at episode start
+        # Stateful LSTM maintains hidden state across steps within episode
+        # Each new episode must start with clean state
+        logger.debug('Resetting LSTM states for new episode')
+        self.local_actor.reset_states()
+        self.local_critic.reset_states()
         
         current_episode = 0
         with episode_lock:
@@ -1999,68 +2014,51 @@ class Agent(threading.Thread):
 
     # 정책신경망과 가치신경망을 업데이트
     def train_model(self, done):
-        logger.debug('Model training started')
+        logger.debug('Model training started (Sequential Mode for Stateful LSTM)')
         discounted_prediction = self.discounted_prediction(self.rewards, done)
 
-        states = np.zeros((len(self.states), 1, 2000))
-        for i in range(len(self.states)):
-            states[i] = self.states[i]
-
-        states = np.float32(states )
-
-        values = self.critic.predict_on_batch(states)
-        values = np.reshape(values, len(values))
+        # Prepare individual states
+        # history items are (1, 2000), need (1, 1, 2000) for stateful LSTM
+        states = [s.reshape(1, 1, 2000) for s in self.states]
+        
+        # Calculate values sequentially (Keras 3 stateful requirement)
+        values = []
+        with a3c_graph.as_default():
+            with self.sess.as_default():
+                for s in states:
+                    v = self.local_critic.predict_on_batch(s)
+                    values.append(v[0][0])
+        values = np.array(values)
 
         advantages = discounted_prediction - values
 
-        # Mini-Batch Logic: Buffer data instead of immediate update
-        if config.ENABLE_MINI_BATCH:
-            if not hasattr(self, 'mini_batch_buffer'):
-                self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
+        # SEQUENTIAL TRAINING
+        # We must update the model step-by-step to maintain proper LSTM state flow.
+        try:
+            for i in range(len(states)):
+                s = np.float32(states[i])
+                a = np.vstack([self.actions[i]]) # (1, action_size)
+                adv = np.array([advantages[i]], dtype=np.float32)
+                target = np.array([discounted_prediction[i]], dtype=np.float32)
+
+                # Perform update for this single step
+                self.optimizer[0]([s, a, adv])
+                self.optimizer[1]([s, target])
             
-            try:
-                # Append current chunk's data to buffer
-                self.mini_batch_buffer['inputs'].append(states)
-                self.mini_batch_buffer['actions'].append(np.vstack(self.actions))
-                self.mini_batch_buffer['advantages'].append(advantages)
-                self.mini_batch_buffer['targets'].append(discounted_prediction)
-                
-                # Check if we have enough data (chunks)
-                if len(self.mini_batch_buffer['advantages']) >= config.MINI_BATCH_SIZE:
-                    # Concatenate all buffered data
-                    batch_inputs = np.concatenate(self.mini_batch_buffer['inputs'], axis=0)
-                    batch_actions = np.concatenate(self.mini_batch_buffer['actions'], axis=0)
-                    batch_advantages = np.concatenate(self.mini_batch_buffer['advantages'], axis=0)
-                    batch_targets = np.concatenate(self.mini_batch_buffer['targets'], axis=0)
-                    
-
-                    # Advantage Normalization removed per user request
-                    # batch_advantages = (batch_advantages - np.mean(batch_advantages)) / (np.std(batch_advantages) + 1e-8)
-                    
-
-                    # Perform ONE large update
-                    self.optimizer[0]([batch_inputs, batch_actions, batch_advantages])
-                    self.optimizer[1]([batch_inputs, batch_targets])
-                    
-                    self.avg_loss += 0 
-                    
-                    # Clear buffer immediately after training to free memory
-                    self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
-            except Exception as e:
-                logger.error("Error during mini-batch training: {}".format(str(e)))
-                # Clear buffer on error to prevent corrupted state and memory growth
-                self.mini_batch_buffer = {'inputs': [], 'actions': [], 'advantages': [], 'targets': []}
-                raise e
-        else:
-            # Standard immediate update
-            # Advantage Normalization removed per user request
-            # advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
+            self.avg_loss += 0 # Loss tracking can be improved later
             
+        except Exception as e:
+            logger.error("Error during sequential training: {}".format(str(e)))
+            raise e
 
-            self.optimizer[0]([states, np.vstack(self.actions), advantages])
-            self.optimizer[1]([states, discounted_prediction])
-
+        # Clear buffers
         self.states, self.actions, self.rewards = [], [], []
+
+        # Reset LSTM states after episode completion
+        if done:
+            logger.debug('Episode complete - resetting LSTM states')
+            self.local_actor.reset_states()
+            self.local_critic.reset_states()
 
         logger.debug('Model training completed')
 
@@ -2152,6 +2150,11 @@ class Agent(threading.Thread):
         # 이미 정규화 in evaluate_aesthetics_score
         #history = np.float32(history / 255.)
         logger.debug('Getting action...')
+        
+        # Reshape for stateful LSTM: (batch, timesteps, features)
+        # Input comes as (1, 2000), need (1, 1, 2000)
+        history = history.reshape(1, 1, 2000)
+        
         with a3c_graph.as_default():
             with self.sess.as_default():
                 # predict_on_batch is more thread-safe and direct than predict()
