@@ -146,9 +146,11 @@ global_dtype_np = np.float32
 #vfn_sess = None
 
 # 멀티쓰레딩을 위한 글로벌 변수
-global episode, total_steps
+global episode, total_steps, total_initial_score, total_final_score
 episode = 0
 total_steps = 0
+total_initial_score = 0.0
+total_final_score = 0.0
 episode_lock = threading.Lock()
 EPISODES = config.MAX_EPISODES
 
@@ -190,7 +192,7 @@ def trigger_cloud_backup(is_periodic=True):
         model_tar_path = None
 
         if os.path.exists(summary_dir):
-            tar_filename = 'summary_{}_{}.tar.gz'.format(type_str.lower(), timestamp)
+            tar_filename = 'summary_{}_{}_beta{}.tar.gz'.format(type_str.lower(), timestamp, config.BETA)
             tar_path = os.path.join(working_dir, tar_filename)
             
             logger.warning('Compressing summary to: %s', tar_filename)
@@ -225,7 +227,7 @@ def trigger_cloud_backup(is_periodic=True):
         model_base = os.path.dirname(os.path.abspath(model_dir))
         
         if os.path.exists(model_dir):
-            model_tar_filename = 'models_{}_{}.tar.gz'.format(type_str.lower(), timestamp)
+            model_tar_filename = 'models_{}_{}_beta{}.tar.gz'.format(type_str.lower(), timestamp, config.BETA)
             model_tar_path = os.path.join(working_dir, model_tar_filename)
             
             logger.warning('Compressing models from %s to: %s', model_dir, model_tar_filename)
@@ -1408,7 +1410,7 @@ class Agent(threading.Thread):
             image: Image array to process
             filename: Optional filename for logging
         """
-        global episode, total_steps, episode_lock
+        global episode, total_steps, total_initial_score, total_final_score, episode_lock
         
         step = 0
         self.t = 0
@@ -1674,10 +1676,12 @@ class Agent(threading.Thread):
                         logger.info("\n" + "\n".join(cum_lines))
                 
                 if terminals[0] == 1 or step >= self.T_max:
-                    # 에피소드 종료시 글로벌 에피소드 카운트 및 총 스텝 수 증가를 Thread-Safe하게 처리
+                    # 에피소드 종료시 글로벌 에피소드 카운트, 총 스텝 수, 점수 누적을 Thread-Safe하게 처리
                     with episode_lock:
                         episode += 1
                         total_steps += step
+                        total_initial_score += global_score
+                        total_final_score += new_scores[0]
                 
                 # Print error statistics periodically
                 if episode % 100 == 0:
@@ -2365,10 +2369,15 @@ if __name__ == "__main__":
             total_epochs = config.EPOCH_SIZE
         total_elapsed = time.time() - script_start_time
         total_avg_steps = total_steps / max(1, episode)
+        total_avg_initial_score = total_initial_score / max(1, episode)
+        total_avg_final_score = total_final_score / max(1, episode)
+        
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
         logger.warning("Total Executed Epochs: %d", total_epochs)
         logger.warning("Total Executed Episodes: %d", episode)
+        logger.warning("Average Initial Score: %.4f", total_avg_initial_score)
+        logger.warning("Average Final Score:   %.4f", total_avg_final_score)
         logger.warning("Average Steps/Episode: %.2f", total_avg_steps)
         logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
         logger.warning("="*60)
@@ -2397,10 +2406,15 @@ if __name__ == "__main__":
  
             
         total_avg_steps = total_steps / max(1, episode)
+        total_avg_initial_score = total_initial_score / max(1, episode)
+        total_avg_final_score = total_final_score / max(1, episode)
+        
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
         logger.warning("Total Executed Epochs: %d", total_epochs)
         logger.warning("Total Executed Episodes: %d", episode)
+        logger.warning("Average Initial Score: %.4f", total_avg_initial_score)
+        logger.warning("Average Final Score:   %.4f", total_avg_final_score)
         logger.warning("Average Steps/Episode: %.2f", total_avg_steps)
         logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
         logger.warning("="*60)

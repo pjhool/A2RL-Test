@@ -53,8 +53,8 @@ LOG_DIR = os.path.join(LOG_SUMMARY_ROOT, 'logs', date_str)
 ALEXNET_NPY = os.path.join(DRIVE_ROOT, 'alexnet.npy')
 
 # --- A3C Hyperparameters ---
-ACTOR_LR = 2.0e-5
-CRITIC_LR = 2.0e-5
+ACTOR_LR = 1.0e-5
+CRITIC_LR = 1.0e-5
 DISCOUNT_FACTOR = 0.99
 #BETA = 0.1
 BETA = float(os.environ.get('A2RL_BETA', '0.05'))
