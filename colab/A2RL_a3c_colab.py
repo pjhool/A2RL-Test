@@ -984,7 +984,8 @@ class A3CAgent:
                              [self.summary_op, self.summary_placeholders,
                               self.update_ops, self.summary_writer],
                              train_path=train_path,
-                             train_files=train_files[i::self.threads], # Pass sorted slice
+                             #train_files=train_files[i::self.threads], # Pass sorted slice
+                             train_files=train_files,
                              start_epoch=start_epoch,
                              current_fold=0,
                              thread_id=i,
