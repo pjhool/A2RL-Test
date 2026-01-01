@@ -24,7 +24,7 @@ def objective(trial):
     # step_penalty = trial.suggest_float('step_penalty', 0.0, 0.1)
     # min_steps = trial.suggest_int('min_steps', 3, 10)
     
-    beta = trial.suggest_float('A2RL_BETA', 0.01, 0.2, log=True)
+    beta = trial.suggest_float('A2RL_BETA', 0.01, 0.15, log=True)
     
     # Fixed Reward Scale, Step Penalty, and Min Steps
     reward_scale = 1.0
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     
     # User Request: Tune Beta from high to low (Prioritize Exploration)
     # Enqueue specific Beta values to try first
-    study.enqueue_trial({'A2RL_BETA': 0.2})
+    study.enqueue_trial({'A2RL_BETA': 0.15})
     study.enqueue_trial({'A2RL_BETA': 0.1})
     study.enqueue_trial({'A2RL_BETA': 0.05})
     study.enqueue_trial({'A2RL_BETA': 0.01})
