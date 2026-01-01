@@ -2348,8 +2348,8 @@ if __name__ == "__main__":
             logger.warning('Resuming from Fold {}, Epoch {}, Episode {}'.format(start_fold + 1, start_epoch, episode))
         else:
             logger.warning('Resume specified but metadata not found. Starting from scratch with loaded weights.')
-
-
+    total_epochs = 0
+    total_elapsed = 0
     try:
         global_agent.train(train_path=train_path, start_fold=start_fold, start_epoch=start_epoch)
         
@@ -2363,6 +2363,7 @@ if __name__ == "__main__":
             total_epochs = config.K_FOLDS * config.EPOCH_SIZE
         else:
             total_epochs = config.EPOCH_SIZE
+        total_elapsed = time.time() - script_start_time
         total_avg_steps = total_steps / max(1, episode)
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
