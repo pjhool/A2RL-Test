@@ -338,15 +338,20 @@ def load_feature_stats(stats_path):
 def log_gpu_usage():
     """
     Execute nvidia-smi and log the output for status monitoring.
+    Suppress warning if nvidia-smi is not found (CPU-only systems).
     """
     try:
+        # Check if we should even try (optional optimization)
         result = subprocess.run(['nvidia-smi'], capture_output=True, text=True)
         if result.returncode == 0:
             logger.warning("\n" + "="*30 + " GPU STATUS " + "="*30 + "\n" + 
                         result.stdout + 
                         "\n" + "="*72)
         else:
-            logger.warning("nvidia-smi execution failed (code %d)", result.returncode)
+            logger.debug("nvidia-smi joined but failed (code %d)", result.returncode)
+    except FileNotFoundError:
+        # Expected on CPU-only machines
+        logger.debug("nvidia-smi not found. Skipping GPU usage log on CPU-only system.")
     except Exception as e:
         logger.warning("Unexpected error during nvidia-smi: %s", e)
 
@@ -1951,9 +1956,12 @@ class Agent(threading.Thread):
             if epoch_step % config.GPU_LOG_INTERVAL == 0:
                 with gpu_log_lock:
                     if current_log_key not in gpu_logged_epochs:
-                        logger.warning('Thread %d - Triggering periodic GPU usage log (Fold %d, Epoch %d)', 
-                                      self.thread_id, self.current_fold, epoch_step)
-                        log_gpu_usage()
+                        if self.num_gpus > 0:
+                            logger.warning('Thread %d - Triggering periodic GPU usage log (Fold %d, Epoch %d)', 
+                                          self.thread_id, self.current_fold, epoch_step)
+                            log_gpu_usage()
+                        else:
+                            logger.debug('Thread %d - Skipping GPU log on CPU-only system (Fold %d)', self.thread_id, self.current_fold)
                         gpu_logged_epochs.add(current_log_key)
                     else:
                         # Log as info so it doesn't clutter, but we know it's being checked
