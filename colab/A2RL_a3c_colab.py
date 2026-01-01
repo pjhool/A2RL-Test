@@ -146,8 +146,9 @@ global_dtype_np = np.float32
 #vfn_sess = None
 
 # 멀티쓰레딩을 위한 글로벌 변수
-global episode
+global episode, total_steps
 episode = 0
+total_steps = 0
 episode_lock = threading.Lock()
 EPISODES = config.MAX_EPISODES
 
@@ -1407,7 +1408,7 @@ class Agent(threading.Thread):
             image: Image array to process
             filename: Optional filename for logging
         """
-        global episode, episode_lock
+        global episode, total_steps, episode_lock
         
         step = 0
         self.t = 0
@@ -1673,9 +1674,10 @@ class Agent(threading.Thread):
                         logger.info("\n" + "\n".join(cum_lines))
                 
                 if terminals[0] == 1 or step >= self.T_max:
-                    # 에피소드 종료시 글로벌 에피소드 카운트 증가를 Thread-Safe하게 처리
+                    # 에피소드 종료시 글로벌 에피소드 카운트 및 총 스텝 수 증가를 Thread-Safe하게 처리
                     with episode_lock:
                         episode += 1
+                        total_steps += step
                 
                 # Print error statistics periodically
                 if episode % 100 == 0:
@@ -2361,12 +2363,12 @@ if __name__ == "__main__":
             total_epochs = config.K_FOLDS * config.EPOCH_SIZE
         else:
             total_epochs = config.EPOCH_SIZE
-        total_elapsed = time.time() - script_start_time
-            
+        total_avg_steps = total_steps / max(1, episode)
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
         logger.warning("Total Executed Epochs: %d", total_epochs)
         logger.warning("Total Executed Episodes: %d", episode)
+        logger.warning("Average Steps/Episode: %.2f", total_avg_steps)
         logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
         logger.warning("="*60)
         # Optional: Evaluate after full training
@@ -2393,10 +2395,12 @@ if __name__ == "__main__":
         total_elapsed = time.time() - script_start_time
  
             
+        total_avg_steps = total_steps / max(1, episode)
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
         logger.warning("Total Executed Epochs: %d", total_epochs)
         logger.warning("Total Executed Episodes: %d", episode)
+        logger.warning("Average Steps/Episode: %.2f", total_avg_steps)
         logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
         logger.warning("="*60)
         
