@@ -1425,6 +1425,11 @@ class Agent(threading.Thread):
         self.action_counts = np.zeros(self.action_size, dtype=np.int32)  # Cumulative across all episodes
         self.episode_action_counts = np.zeros(self.action_size, dtype=np.int32)  # Per-episode counts
         self.episode_action_history = []  # Stores action sequence for current episode
+        
+        # Epoch-level statistics
+        self.epoch_initial_score = 0.0
+        self.epoch_final_score = 0.0
+        self.epoch_episode_count = 0
 
         # Feature scaling setup
         self.enable_feature_scaling = config.ENABLE_FEATURE_SCALING
@@ -1803,6 +1808,10 @@ class Agent(threading.Thread):
                         total_steps += step
                         total_initial_score += global_score
                         total_final_score += new_scores[0]
+                        # Accumulate epoch-specific scores
+                        self.epoch_initial_score += global_score
+                        self.epoch_final_score += new_scores[0]
+                        self.epoch_episode_count += 1
                 
                 # Print error statistics periodically
                 if episode % 100 == 0:
@@ -2115,12 +2124,32 @@ class Agent(threading.Thread):
                     random.shuffle(train_list)
                     logger.info('Thread %d: Shuffled training dataset for epoch %d', self.thread_id, epoch_step)
             
+            # Reset epoch statistics at the start of each epoch
+            self.epoch_initial_score = 0.0
+            self.epoch_final_score = 0.0
+            self.epoch_episode_count = 0
+            
             # num_batches processes images in batches
             # Calculate specifically based on current list size
             num_batches = (len(train_list) + self.batch_size - 1) // self.batch_size
             
             self.train_episode(TrainPath, num_batches=num_batches, verbose=True, 
                                use_random_sampling=False, file_list=train_list)
+            
+            # End of Epoch Summary
+            if self.epoch_episode_count > 0:
+                epoch_avg_init = self.epoch_initial_score / self.epoch_episode_count
+                epoch_avg_final = self.epoch_final_score / self.epoch_episode_count
+                epoch_improvement = epoch_avg_final - epoch_avg_init
+                epoch_imp_pct = (epoch_improvement / abs(epoch_avg_init) * 100) if epoch_avg_init != 0 else 0
+                
+                logger.warning("\n" + "="*72)
+                logger.warning("Thread %d - EPOCH %d PERFORMANCE SUMMARY:", self.thread_id, epoch_step)
+                logger.warning("  Episodes Processed: %d", self.epoch_episode_count)
+                logger.warning("  Avg Initial Score:  %.4f", epoch_avg_init)
+                logger.warning("  Avg Final Score:    %.4f", epoch_avg_final)
+                logger.warning("  Avg Improvement:    %+.4f ({:+.2f}%)".format(epoch_improvement, epoch_imp_pct))
+                logger.warning("="*72)
             
             # Validation phase
             if (epoch_step + 1) % config.VALIDATION_FREQ == 0:
