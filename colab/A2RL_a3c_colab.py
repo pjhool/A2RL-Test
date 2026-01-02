@@ -1429,6 +1429,7 @@ class Agent(threading.Thread):
         # Epoch-level statistics
         self.epoch_initial_score = 0.0
         self.epoch_final_score = 0.0
+        self.epoch_total_steps = 0
         self.epoch_episode_count = 0
 
         # Feature scaling setup
@@ -1811,6 +1812,7 @@ class Agent(threading.Thread):
                         # Accumulate epoch-specific scores
                         self.epoch_initial_score += global_score
                         self.epoch_final_score += new_scores[0]
+                        self.epoch_total_steps += step
                         self.epoch_episode_count += 1
                 
                 # Print error statistics periodically
@@ -2127,6 +2129,7 @@ class Agent(threading.Thread):
             # Reset epoch statistics at the start of each epoch
             self.epoch_initial_score = 0.0
             self.epoch_final_score = 0.0
+            self.epoch_total_steps = 0
             self.epoch_episode_count = 0
             
             # num_batches processes images in batches
@@ -2140,6 +2143,7 @@ class Agent(threading.Thread):
             if self.epoch_episode_count > 0:
                 epoch_avg_init = self.epoch_initial_score / self.epoch_episode_count
                 epoch_avg_final = self.epoch_final_score / self.epoch_episode_count
+                epoch_avg_steps = self.epoch_total_steps / self.epoch_episode_count
                 epoch_improvement = epoch_avg_final - epoch_avg_init
                 epoch_imp_pct = (epoch_improvement / abs(epoch_avg_init) * 100) if epoch_avg_init != 0 else 0
                 
@@ -2149,6 +2153,7 @@ class Agent(threading.Thread):
                 logger.warning("  Avg Initial Score:  %.4f", epoch_avg_init)
                 logger.warning("  Avg Final Score:    %.4f", epoch_avg_final)
                 logger.warning("  Avg Improvement:    %+.4f ({:+.2f}%)".format(epoch_improvement, epoch_imp_pct))
+                logger.warning("  Avg Steps/Episode:  %.2f", epoch_avg_steps)
                 logger.warning("="*72)
             
             # Validation phase
