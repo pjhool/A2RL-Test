@@ -1430,7 +1430,10 @@ class Agent(threading.Thread):
         self.epoch_initial_score = 0.0
         self.epoch_final_score = 0.0
         self.epoch_total_steps = 0
+        self.epoch_total_p_max = 0.0
+        self.epoch_total_loss = 0.0
         self.epoch_episode_count = 0
+        self.epoch_update_count = 0
 
         # Feature scaling setup
         self.enable_feature_scaling = config.ENABLE_FEATURE_SCALING
@@ -1814,6 +1817,8 @@ class Agent(threading.Thread):
                         self.epoch_initial_score += global_score
                         self.epoch_final_score += new_scores[0]
                         self.epoch_total_steps += step
+                        self.epoch_total_p_max += (self.avg_p_max / float(step)) if step > 0 else 0
+                        self.epoch_total_loss += self.avg_loss
                         self.epoch_episode_count += 1
                 
                 # Print error statistics periodically
@@ -2131,7 +2136,10 @@ class Agent(threading.Thread):
             self.epoch_initial_score = 0.0
             self.epoch_final_score = 0.0
             self.epoch_total_steps = 0
+            self.epoch_total_p_max = 0.0
+            self.epoch_total_loss = 0.0
             self.epoch_episode_count = 0
+            self.epoch_update_count = 0
             
             # num_batches processes images in batches
             # Calculate specifically based on current list size
@@ -2145,6 +2153,8 @@ class Agent(threading.Thread):
                 epoch_avg_init = self.epoch_initial_score / self.epoch_episode_count
                 epoch_avg_final = self.epoch_final_score / self.epoch_episode_count
                 epoch_avg_steps = self.epoch_total_steps / self.epoch_episode_count
+                epoch_avg_p_max = self.epoch_total_p_max / self.epoch_episode_count
+                epoch_avg_loss = self.epoch_total_loss / self.epoch_update_count if self.epoch_update_count > 0 else 0
                 epoch_improvement = epoch_avg_final - epoch_avg_init
                 epoch_imp_pct = (epoch_improvement / abs(epoch_avg_init) * 100) if epoch_avg_init != 0 else 0
                 
@@ -2155,7 +2165,22 @@ class Agent(threading.Thread):
                 logger.warning("  Avg Final Score:    %.4f", epoch_avg_final)
                 logger.warning("  Avg Improvement:    %+.4f ({:+.2f}%)".format(epoch_improvement, epoch_imp_pct))
                 logger.warning("  Avg Steps/Episode:  %.2f", epoch_avg_steps)
+                logger.warning("  Avg Max Prob/Ep:    %.4f", epoch_avg_p_max)
+                logger.warning("  Avg Loss/Update:    %.6f", epoch_avg_loss)
                 logger.warning("="*72)
+                
+                # Add Epoch-level metrics to TensorBoard
+                if hasattr(self, 'summary_writer') and self.summary_writer is not None:
+                    epoch_summary = tf.Summary()
+                    epoch_summary.value.add(tag='Epoch/Average Loss', simple_value=float(epoch_avg_loss))
+                    epoch_summary.value.add(tag='Epoch/Average Initial Score', simple_value=float(epoch_avg_init))
+                    epoch_summary.value.add(tag='Epoch/Average Final Score', simple_value=float(epoch_avg_final))
+                    epoch_summary.value.add(tag='Epoch/Average Improvement', simple_value=float(epoch_improvement))
+                    epoch_summary.value.add(tag='Epoch/Improvement Percentage', simple_value=float(epoch_imp_pct))
+                    epoch_summary.value.add(tag='Epoch/Average Steps', simple_value=float(epoch_avg_steps))
+                    
+                    self.summary_writer.add_summary(epoch_summary, epoch_step + 1)
+                    self.summary_writer.flush()
             
             # Validation phase
             if (epoch_step + 1) % config.VALIDATION_FREQ == 0:
@@ -2216,10 +2241,10 @@ class Agent(threading.Thread):
                 target = np.array([discounted_prediction[i]], dtype=np.float32)
 
                 # Perform update for this single step
-                self.optimizer[0]([s, a, adv])
-                self.optimizer[1]([s, target])
-            
-            self.avg_loss += 0 # Loss tracking can be improved later
+                l_actor = self.optimizer[0]([s, a, adv])[0]
+                l_critic = self.optimizer[1]([s, target])[0]
+                self.avg_loss += (l_actor + l_critic)
+                self.epoch_update_count += 1
             
         except Exception as e:
             logger.error("Error during sequential training: {}".format(str(e)))
