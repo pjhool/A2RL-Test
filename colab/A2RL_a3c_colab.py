@@ -1250,6 +1250,9 @@ class A3CAgent:
                            self.update_ops, self.summary_writer],
                           brain=self)
         
+        # CRITICAL: Synchronize local model weights with global models for evaluation
+        eval_agent.update_local_model()
+        
         for i, filepath in enumerate(test_files):
             logger.info("Evaluating [%d/%d]: %s", i+1, len(test_files), filepath)
             img, error = load_and_validate_image(filepath)
@@ -1971,6 +1974,9 @@ class Agent(threading.Thread):
         current_image = image
         done = False
         
+        logger.info("Evaluation Episode Start: %s (T_max=%d, MIN_STEPS=%d)", 
+                    filename, self.T_max, config.MIN_STEPS)
+        
         while step < self.T_max and not done:
             # Prepare state: concatenate global and local features (2000-dim)
             observe = np.concatenate((global_feature, local_feature), axis=1)
@@ -2028,6 +2034,9 @@ class Agent(threading.Thread):
             # CRITICAL FIX: If we forced continue (ignored STOP), we must reset the terminal flag
             if action_index == 13 and step < config.MIN_STEPS:
                  terminals[0] = 0
+            
+            logger.debug("Step %d - After Action Process: terminals[0]=%d, ratios=%s", 
+                         step, terminals[0], ratios)
             
             if terminals[0] == 1:
                 logger.info("Terminal condition met via actions at step %d", step)
