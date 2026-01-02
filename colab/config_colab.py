@@ -68,8 +68,8 @@ THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Colab usually gives 2 core
 T_MAX = int(os.environ.get('A2RL_T_MAX', '50'))          # Maximum steps per episode
 UPDATE_FREQ = 10    # Model update frequency (t_max)
 STEP_PENALTY = float(os.environ.get('A2RL_STEP_PENALTY', '0.005'))
-MIN_STEPS = int(os.environ.get('A2RL_MIN_STEPS', '3'))      # Encourage at least 3 steps before STOP
-STOP_REWARD = float(os.environ.get('A2RL_STOP_REWARD', '-0.5')) # Penalty for early STOP
+MIN_STEPS = int(os.environ.get('A2RL_MIN_STEPS', '10'))      # Encourage at least 10 steps before STOP
+STOP_REWARD = float(os.environ.get('A2RL_STOP_REWARD', '-1.0')) # Penalty for early STOP
 
 REWARD_SCALE = float(os.environ.get('A2RL_REWARD_SCALE', '10.0'))
 REWARD_CLIP_MIN = float(os.environ.get('A2RL_REWARD_CLIP_MIN', '-1.0'))

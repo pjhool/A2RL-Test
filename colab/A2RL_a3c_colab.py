@@ -1673,8 +1673,8 @@ class Agent(threading.Thread):
             
             if action == 13:
                 if step < config.MIN_STEPS:
-                    done = True 
-                    logger.info('Action 13 (STOP) ignored (step %d < %d)', step, config.MIN_STEPS)
+                    done = False 
+                    logger.info('Action 13 (STOP) ignored (step %d < %d) - Forcing continuation', step, config.MIN_STEPS)
                 else:
                     done = True
                     logger.info('Episode termination action (13) received.')
@@ -1686,8 +1686,8 @@ class Agent(threading.Thread):
             ratios, terminals = command2action([action], ratios, terminals)
             
             # FIX: If we forced continue (ignored STOP), we must reset terminal flag
-            # if action == 13 and step < config.MIN_STEPS:
-            #     terminals[0] = 0
+            if action == 13 and step < config.MIN_STEPS:
+                terminals[0] = 0
             
             logger.debug('Ratios: %s', ratios)
             
@@ -1707,11 +1707,12 @@ class Agent(threading.Thread):
             logger.info("Step %d Action %d: Prev=%.4f, New=%.4f, Diff=%.4f", step, action, local_score, new_scores[0], score_diff)
             
             if action == 13:
-                reward = 0.0
                 if step < config.MIN_STEPS:
-                     logger.info('Action 13 (STOP) triggered early (step %d < %d) - Reward: %.4f', 
+                    reward = config.STOP_REWARD
+                    logger.info('Action 13 (STOP) triggered early (step %d < %d) - Penalty Reward: %.4f', 
                                 step, config.MIN_STEPS, reward)
                 else:
+                    reward = 0.0
                     logger.info('Action 13 (STOP) - Reward set to 0.0')
             else:
                 # Strengthen reward signal: use sign * 5.0 for clear direction
