@@ -151,6 +151,8 @@ episode = 0
 total_steps = 0
 total_initial_score = 0.0
 total_final_score = 0.0
+total_loss = 0.0
+total_updates = 0
 episode_lock = threading.Lock()
 EPISODES = config.MAX_EPISODES
 
@@ -1240,12 +1242,13 @@ class A3CAgent:
         logger.info("Starting post-training evaluation on %d files", len(test_files))
         results = []
         
-        # Create a single Agent for evaluation
+        # Create a single Agent for evaluation - PASS brain=self
         eval_agent = Agent(self.action_size, self.state_size,
                           [self.actor, self.critic], self.sess,
                           self.optimizer, self.discount_factor,
                           [self.summary_op, self.summary_placeholders,
-                           self.update_ops, self.summary_writer])
+                           self.update_ops, self.summary_writer],
+                          brain=self)
         
         for i, filepath in enumerate(test_files):
             logger.info("Evaluating [%d/%d]: %s", i+1, len(test_files), filepath)
@@ -1642,9 +1645,8 @@ class Agent(threading.Thread):
                 logger.info("  Global Feature - Mean: %.6f, Std: %.6f", global_mean, global_std)
                 logger.info("  Local Feature  - Mean: %.6f, Std: %.6f", local_mean, local_std)
             
-            history = np.expand_dims(observe, axis=0)
-            
-            logger.debug('History shape: %s. History: %s', history.shape, history)
+            # Use raw (2000,) observation for history
+            history = observe.flatten()
             
             action, policy = self.get_action(history)
             
@@ -1742,8 +1744,9 @@ class Agent(threading.Thread):
             
             logger.debug('Reward: %.4f', reward)
             
-            # Policy maximum
-            self.avg_p_max += np.amax(self.actor.predict_on_batch(np.float32(history)))
+            # Policy maximum - Use already calculated policy from get_action()
+            # This avoids redundant prediction and fixes shape mismatch bug
+            self.avg_p_max += np.max(policy)
             
             score += reward
             
@@ -1757,8 +1760,9 @@ class Agent(threading.Thread):
             if step == self.T_max:
                 done = True
             
-            # Train model
-            if self.t % self.t_max == 0 or done:
+            # Train model - Only at the end of episode for stateful LSTM stability
+            # Mid-episode updates via update_local_model() would reset LSTM states
+            if done:
                 self.train_model(done)
                 self.update_local_model()
             
@@ -1819,6 +1823,7 @@ class Agent(threading.Thread):
                         self.epoch_total_steps += step
                         self.epoch_total_p_max += (self.avg_p_max / float(step)) if step > 0 else 0
                         self.epoch_total_loss += self.avg_loss
+                        total_loss += self.avg_loss
                         self.epoch_episode_count += 1
                 
                 # Print error statistics periodically
@@ -1951,6 +1956,10 @@ class Agent(threading.Thread):
         ratios = np.array([[0, 0, 20, 20]])
         terminals = np.array([0])
         
+        # CRITICAL: Reset LSTM states for evaluation episode
+        self.local_actor.reset_states()
+        self.local_critic.reset_states()
+        
         # Initial scoring and feature extraction (Global)
         initial_scores, initial_features = evaluate_aesthetics_score([image])
         initial_score = initial_scores[0]
@@ -1982,10 +1991,13 @@ class Agent(threading.Thread):
                                 self.feature_scaling_method, np.mean(observe_original), np.std(observe_original),
                                 np.mean(observe), np.std(observe))
             
-            history = np.expand_dims(observe, axis=0) # [1, 2000]
+            # history variable should be raw (2000,) or it will be double expanded
+            history = observe.flatten()
             
-            # Get action from actor
-            policy = self.actor.predict_on_batch(history)[0]
+            # Use unified get_action to ensure proper reshaping and session/graph pinning
+            action_index, policy = self.get_action(history)
+            
+            # In evaluation, we use argmax for greedy action selection
             action_index = np.argmax(policy)
             
             # Diagnostic: Log policy every step during evaluation
@@ -2224,6 +2236,9 @@ class Agent(threading.Thread):
         values = []
         with a3c_graph.as_default():
             with self.sess.as_default():
+                # CRITICAL: Reset states before forward pass sequence
+                self.local_actor.reset_states()
+                self.local_critic.reset_states()
                 for s in states:
                     v = self.local_critic.predict_on_batch(s)
                     values.append(v[0][0])
@@ -2234,17 +2249,26 @@ class Agent(threading.Thread):
         # SEQUENTIAL TRAINING
         # We must update the model step-by-step to maintain proper LSTM state flow.
         try:
-            for i in range(len(states)):
-                s = np.float32(states[i])
-                a = np.vstack([self.actions[i]]) # (1, action_size)
-                adv = np.array([advantages[i]], dtype=np.float32)
-                target = np.array([discounted_prediction[i]], dtype=np.float32)
+            with a3c_graph.as_default():
+                with self.sess.as_default():
+                    # CRITICAL: Reset states before backprop sequence
+                    self.local_actor.reset_states()
+                    self.local_critic.reset_states()
+                    for i in range(len(states)):
+                        s = np.float32(states[i])
+                        a = np.vstack([self.actions[i]]) # (1, action_size)
+                        adv = np.array([advantages[i]], dtype=np.float32)
+                        target = np.array([discounted_prediction[i]], dtype=np.float32)
 
-                # Perform update for this single step
-                l_actor = self.optimizer[0]([s, a, adv])[0]
-                l_critic = self.optimizer[1]([s, target])[0]
-                self.avg_loss += (l_actor + l_critic)
-                self.epoch_update_count += 1
+                        # Perform update for this single step
+                        l_actor = self.optimizer[0]([s, a, adv])[0]
+                        l_critic = self.optimizer[1]([s, target])[0]
+                        batch_loss = (l_actor + l_critic)
+                        self.avg_loss += batch_loss
+                        global total_updates
+                        with episode_lock:
+                            total_updates += 1
+                        self.epoch_update_count += 1
             
         except Exception as e:
             logger.error("Error during sequential training: {}".format(str(e)))
@@ -2279,23 +2303,22 @@ class Agent(threading.Thread):
                 with self.sess.as_default():
                     logger.debug('Child build_local_model graph: %s', tf.get_default_graph())
                     
-                    # If brain is available, create local optimizers on this device
-                    # This ensures the forward/backward passes happen on GPU 1
                     if self.brain:
                         self.optimizer = [self.brain.actor_optimizer(), self.brain.critic_optimizer()]
-                        logger.debug("Thread %d: Local optimizers created on %s", self.thread_id, device_name)
                     
-            K.set_learning_phase(1)  # set learning phase
+                    try:
+                        K.set_learning_phase(1)
+                    except Exception:
+                        pass
 
-        input = Input(shape=self.state_size)
-
-        # Option B: Lightweight Network (Dense 256 -> LSTM 256)
+        # USE STATEFUL LSTM ARCHITECTURE (Must match A3CAgent.build_model)
+        # Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000
+        input = Input(batch_shape=(1, 1, 2000))
         fc1 = Dense(256, activation='relu')(input)
-        lstm1 = LSTM(256)(fc1)
+        lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
 
         policy = Dense(self.action_size, activation='softmax')(lstm1)
         value = Dense(1, activation='linear')(lstm1)
-
 
         local_actor = Model(inputs=input, outputs=policy)
         local_critic = Model(inputs=input, outputs=value)
@@ -2350,8 +2373,7 @@ class Agent(threading.Thread):
         #history = np.float32(history / 255.)
         logger.debug('Getting action...')
         
-        # Reshape for stateful LSTM: (batch, timesteps, features)
-        # Input comes as (1, 2000), need (1, 1, 2000)
+        # Standardize input handling: expand to (1, 1, 2000) for stateful LSTM
         history = history.reshape(1, 1, 2000)
         
         with a3c_graph.as_default():
@@ -2556,7 +2578,9 @@ if __name__ == "__main__":
         total_avg_steps = total_steps / max(1, episode)
         total_avg_initial_score = total_initial_score / max(1, episode)
         total_avg_final_score = total_final_score / max(1, episode)
-        
+
+
+
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
         logger.warning("Total Executed Epochs: %d", total_epochs)
@@ -2568,6 +2592,8 @@ if __name__ == "__main__":
         logger.warning("="*60)
         # Optional: Evaluate after full training
         logger.info("Training completed. Running final evaluation...")
+
+
         try:
             all_files = [os.path.abspath(os.path.join(train_path, f)) 
                         for f in os.listdir(train_path) 
@@ -2593,6 +2619,7 @@ if __name__ == "__main__":
         total_avg_steps = total_steps / max(1, episode)
         total_avg_initial_score = total_initial_score / max(1, episode)
         total_avg_final_score = total_final_score / max(1, episode)
+        total_avg_loss = total_loss / max(1, total_updates) if total_updates > 0 else 0
         
         logger.warning("="*60)
         logger.warning("TRAINING SUMMARY")
@@ -2601,12 +2628,14 @@ if __name__ == "__main__":
         logger.warning("Average Initial Score: %.4f", total_avg_initial_score)
         logger.warning("Average Final Score:   %.4f", total_avg_final_score)
         logger.warning("Average Steps/Episode: %.2f", total_avg_steps)
+        logger.warning("Average Loss/Update:    %.6f", total_avg_loss)
         logger.warning("TOTAL EXECUTION TIME: {:.2f}s ({:.2f}m)".format(total_elapsed, total_elapsed / 60.0))
         logger.warning("="*60)
         
         # ✅ Cloud Backup: Create summary/model archives and upload to GDrive
         if config.IS_KAGGLE or config.IS_COLAB:
             trigger_cloud_backup(is_periodic=False)
+
         
         # ✅ CRITICAL: Always cleanup
         logger.info('')
