@@ -1543,7 +1543,7 @@ class Agent(threading.Thread):
             image: Image array to process
             filename: Optional filename for logging
         """
-        global episode, total_steps, total_initial_score, total_final_score, episode_lock
+        global episode, total_steps, total_initial_score, total_final_score, total_loss, total_updates, episode_lock
         
         step = 0
         self.t = 0
@@ -2225,6 +2225,7 @@ class Agent(threading.Thread):
 
     # 정책신경망과 가치신경망을 업데이트
     def train_model(self, done):
+        global total_updates
         logger.debug('Model training started (Sequential Mode for Stateful LSTM)')
         discounted_prediction = self.discounted_prediction(self.rewards, done)
 
@@ -2265,7 +2266,6 @@ class Agent(threading.Thread):
                         l_critic = self.optimizer[1]([s, target])[0]
                         batch_loss = (l_actor + l_critic)
                         self.avg_loss += batch_loss
-                        global total_updates
                         with episode_lock:
                             total_updates += 1
                         self.epoch_update_count += 1
