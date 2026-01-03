@@ -18,14 +18,14 @@ if IS_COLAB:
     print("Config: Detected Google Colab Environment")
     # Assuming Google Drive is mounted at /content/drive
     DRIVE_ROOT = '/content/drive/MyDrive/A2RL/A2RL-Test'
-    DATA_ROOT = '/content/drive/MyDrive/A2RL/data'
+    DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', '/content/drive/MyDrive/A2RL/data')
     LOG_SUMMARY_ROOT = '/content'  # Local VM disk for speed, sync later
     
 elif IS_KAGGLE:
     print("Config: Detected Kaggle Environment")
     # Kaggle directory structure
     DRIVE_ROOT = '/kaggle/working/A2RL-Test' # Output directory
-    DATA_ROOT = '/kaggle/input/a2rl-data'    # Read-only input data
+    DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', '/kaggle/input/a2rl-data')    # Read-only input data
     LOG_SUMMARY_ROOT = '/kaggle/working'     # Writable output directory
     
     # Ensure working dirs exist in Kaggle
@@ -35,7 +35,7 @@ elif IS_KAGGLE:
 else:
     print("Config: Detected Local Environment (Fallback)")
     DRIVE_ROOT = './'
-    DATA_ROOT = './data'
+    DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', './data')
     LOG_SUMMARY_ROOT = './'
 
 TRAIN_PATH = os.path.join(DATA_ROOT, 'train')
