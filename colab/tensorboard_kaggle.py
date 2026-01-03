@@ -28,17 +28,29 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
         # Create directory if it doesn't exist
         os.makedirs(log_dir, exist_ok=True)
     
+    # Kill existing tensorboard processes to avoid port conflicts/stale instances
+    try:
+        os.system("pkill -f tensorboard")
+    except:
+        pass
+
     # Load TensorBoard extension
     try:
         # For Jupyter/Kaggle notebooks
-        get_ipython().run_line_magic('load_ext', 'tensorboard')
-        get_ipython().run_line_magic('tensorboard', f'--logdir {log_dir}')
+        # Reloading extension can help if it was already loaded in a broken state
+        get_ipython().run_line_magic('reload_ext', 'tensorboard')
+        
+        # Start TensorBoard with bind_all which is often needed in containerized environments
+        get_ipython().run_line_magic('tensorboard', f'--logdir {log_dir} --bind_all')
+        
         print(f"TensorBoard started successfully!")
         print(f"Monitoring: {log_dir}")
+        print("\nNote: If the graph is empty, wait for the first summary write (approx. 10-20 mins).")
+        print("Note: If the UI doesn't appear, try refreshing the page.")
     except Exception as e:
         print(f"Error starting TensorBoard: {e}")
         print("\nAlternative: Use command line in a separate terminal:")
-        print(f"  tensorboard --logdir={log_dir} --host=0.0.0.0 --port=6006")
+        print(f"  tensorboard --logdir={log_dir} --bind_all")
 
 
 def list_tensorboard_logs(base_dir='/kaggle/working/summary/A2RL_a3c'):
