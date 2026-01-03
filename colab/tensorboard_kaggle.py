@@ -41,14 +41,10 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
             logger.info(f"Found existing TensorBoard processes: {pids}. Killing them...")
             for pid in pids:
                 try:
-                    os.kill(int(pid), 15) # SIGTERM
+                    os.kill(int(pid), 9) # SIGKILL (Aggressive kill)
                 except OSError:
                     pass
             time.sleep(2) # Wait for cleanup
-            # Force kill if still alive
-            pids_after = subprocess.check_output(["pgrep", "-f", "tensorboard"]).decode().split()
-            for pid in pids_after:
-                 os.kill(int(pid), 9) # SIGKILL
             logger.info("Cleanup complete.")
         else:
             logger.info("No existing TensorBoard instances found.")
@@ -66,10 +62,10 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
             get_ipython().run_line_magic('reload_ext', 'tensorboard')
             
         # Start TensorBoard with bind_all which is often needed in containerized environments
+        logger.info(f"Starting TensorBoard on {log_dir} ...")
         get_ipython().run_line_magic('tensorboard', f'--logdir {log_dir} --bind_all')
         
         logger.info(f"TensorBoard started successfully!")
-        logger.info(f"Monitoring: {log_dir}")
         logger.info("\nNote: If the graph is empty, wait for the first summary write (approx. 10-20 mins).")
         logger.info("Note: If the UI doesn't appear, try refreshing the page.")
     except Exception as e:
