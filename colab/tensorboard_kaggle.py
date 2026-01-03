@@ -25,14 +25,31 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
     if not os.path.exists(log_dir):
         print(f"Warning: Log directory does not exist yet: {log_dir}")
         print("TensorBoard will start once logs are created.")
-        # Create directory if it doesn't exist
-        os.makedirs(log_dir, exist_ok=True)
-    
+    import subprocess
+    import time
+
     # Kill existing tensorboard processes to avoid port conflicts/stale instances
+    print("Checking for existing TensorBoard instances...")
     try:
-        os.system("pkill -f tensorboard")
-    except:
-        pass
+        # Find pids of tensorboard
+        pids = subprocess.check_output(["pgrep", "-f", "tensorboard"]).decode().split()
+        if pids:
+            print(f"Found existing TensorBoard processes: {pids}. Killing them...")
+            for pid in pids:
+                try:
+                    os.kill(int(pid), 15) # SIGTERM
+                except OSError:
+                    pass
+            time.sleep(2) # Wait for cleanup
+            # Force kill if still alive
+            pids_after = subprocess.check_output(["pgrep", "-f", "tensorboard"]).decode().split()
+            for pid in pids_after:
+                 os.kill(int(pid), 9) # SIGKILL
+            print("Cleanup complete.")
+        else:
+            print("No existing TensorBoard instances found.")
+    except Exception as e:
+        print(f"Cleanup check skipped/failed (not critical): {e}")
 
     # Load TensorBoard extension
     try:
