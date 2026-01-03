@@ -19,22 +19,26 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
         from tensorboard_kaggle import start_tensorboard
         start_tensorboard()
     """
-    import os
+    import logging
     
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
     # Check if log directory exists
     if not os.path.exists(log_dir):
-        print(f"Warning: Log directory does not exist yet: {log_dir}")
-        print("TensorBoard will start once logs are created.")
+        logger.info(f"Warning: Log directory does not exist yet: {log_dir}")
+        logger.info("TensorBoard will start once logs are created.")
     import subprocess
     import time
 
     # Kill existing tensorboard processes to avoid port conflicts/stale instances
-    print("Checking for existing TensorBoard instances...")
+    logger.info("Checking for existing TensorBoard instances...")
     try:
         # Find pids of tensorboard
         pids = subprocess.check_output(["pgrep", "-f", "tensorboard"]).decode().split()
         if pids:
-            print(f"Found existing TensorBoard processes: {pids}. Killing them...")
+            logger.info(f"Found existing TensorBoard processes: {pids}. Killing them...")
             for pid in pids:
                 try:
                     os.kill(int(pid), 15) # SIGTERM
@@ -45,11 +49,11 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
             pids_after = subprocess.check_output(["pgrep", "-f", "tensorboard"]).decode().split()
             for pid in pids_after:
                  os.kill(int(pid), 9) # SIGKILL
-            print("Cleanup complete.")
+            logger.info("Cleanup complete.")
         else:
-            print("No existing TensorBoard instances found.")
+            logger.info("No existing TensorBoard instances found.")
     except Exception as e:
-        print(f"Cleanup check skipped/failed (not critical): {e}")
+        logger.info(f"Cleanup check skipped/failed (not critical): {e}")
 
     # Load TensorBoard extension
     try:
@@ -64,14 +68,14 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
         # Start TensorBoard with bind_all which is often needed in containerized environments
         get_ipython().run_line_magic('tensorboard', f'--logdir {log_dir} --bind_all')
         
-        print(f"TensorBoard started successfully!")
-        print(f"Monitoring: {log_dir}")
-        print("\nNote: If the graph is empty, wait for the first summary write (approx. 10-20 mins).")
-        print("Note: If the UI doesn't appear, try refreshing the page.")
+        logger.info(f"TensorBoard started successfully!")
+        logger.info(f"Monitoring: {log_dir}")
+        logger.info("\nNote: If the graph is empty, wait for the first summary write (approx. 10-20 mins).")
+        logger.info("Note: If the UI doesn't appear, try refreshing the page.")
     except Exception as e:
-        print(f"Error starting TensorBoard: {e}")
-        print("\nAlternative: Use command line in a separate terminal:")
-        print(f"  tensorboard --logdir={log_dir} --bind_all")
+        logger.error(f"Error starting TensorBoard: {e}")
+        logger.info("\nAlternative: Use command line in a separate terminal:")
+        logger.info(f"  tensorboard --logdir={log_dir} --bind_all")
 
 
 def list_tensorboard_logs(base_dir='/kaggle/working/summary/A2RL_a3c'):
@@ -81,20 +85,26 @@ def list_tensorboard_logs(base_dir='/kaggle/working/summary/A2RL_a3c'):
     Args:
         base_dir: Base directory containing TensorBoard logs
     """
+    import logging
     import os
     from datetime import datetime
     
+    # Configure logging if not already configured
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
     if not os.path.exists(base_dir):
-        print(f"Log directory does not exist: {base_dir}")
+        logger.info(f"Log directory does not exist: {base_dir}")
         return
     
-    print(f"Available TensorBoard logs in {base_dir}:\n")
+    logger.info(f"Available TensorBoard logs in {base_dir}:\n")
     
     # List all subdirectories (date folders)
     for date_folder in sorted(os.listdir(base_dir)):
         date_path = os.path.join(base_dir, date_folder)
         if os.path.isdir(date_path):
-            print(f"📅 {date_folder}/")
+            logger.info(f"📅 {date_folder}/")
             
             # List event files in each date folder
             for event_folder in sorted(os.listdir(date_path)):
@@ -105,28 +115,33 @@ def list_tensorboard_logs(base_dir='/kaggle/working/summary/A2RL_a3c'):
                     if files:
                         total_size = sum(os.path.getsize(os.path.join(event_path, f)) for f in files)
                         size_mb = total_size / (1024 * 1024)
-                        print(f"  📊 {event_folder}/ ({len(files)} files, {size_mb:.2f} MB)")
+                        logger.info(f"  📊 {event_folder}/ ({len(files)} files, {size_mb:.2f} MB)")
     
-    print(f"\nTo view a specific date's logs:")
-    print(f"  start_tensorboard('{base_dir}/YYYYMMDD')")
+    logger.info(f"\nTo view a specific date's logs:")
+    logger.info(f"  start_tensorboard('{base_dir}/YYYYMMDD')")
 
 
 if __name__ == "__main__":
     # If run as script, start TensorBoard with default settings
     import sys
+    import logging
+    
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
     
     if len(sys.argv) > 1:
         log_dir = sys.argv[1]
     else:
         log_dir = '/kaggle/working/summary/A2RL_a3c'
     
-    print("=" * 60)
-    print("TensorBoard Helper for Kaggle")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("TensorBoard Helper for Kaggle")
+    logger.info("=" * 60)
     
     list_tensorboard_logs(log_dir)
-    print("\n" + "=" * 60)
-    print("Starting TensorBoard...")
-    print("=" * 60 + "\n")
+    logger.info("\n" + "=" * 60)
+    logger.info("Starting TensorBoard...")
+    logger.info("=" * 60 + "\n")
     
     start_tensorboard(log_dir)
