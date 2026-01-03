@@ -2677,7 +2677,7 @@ if __name__ == "__main__":
         global_agent.load_model(args.evaluate)
         
         # Determine test files
-        eval_source = train_path
+        eval_source = config.EVAL_DATA_ROOT
         all_files = [os.path.abspath(os.path.join(eval_source, f)) 
                     for f in os.listdir(eval_source) 
                     if os.path.isfile(os.path.join(eval_source, f))]
@@ -2774,9 +2774,10 @@ if __name__ == "__main__":
 
 
         try:
-            all_files = [os.path.abspath(os.path.join(train_path, f)) 
-                        for f in os.listdir(train_path) 
-                        if os.path.isfile(os.path.join(train_path, f))]
+            eval_source = config.EVAL_DATA_ROOT
+            all_files = [os.path.abspath(os.path.join(eval_source, f)) 
+                        for f in os.listdir(eval_source) 
+                        if os.path.isfile(os.path.join(eval_source, f))]
             all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
             #random.shuffle(all_files)
             logger.info('all_files len: %d', len(all_files))
