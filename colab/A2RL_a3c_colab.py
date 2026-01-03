@@ -443,13 +443,60 @@ def load_and_validate_image(filepath):
         img_rgb = img[:, :, :3]
         
         # Check minimum dimensions
-        if img_rgb.shape[0] < config.MIN_IMAGE_DIMENSION or img_rgb.shape[1] < config.MIN_IMAGE_DIMENSION:
-            return None, "Image too small: {}x{}".format(img_rgb.shape[0], img_rgb.shape[1])
-        
-        return img_rgb, None
+        if img.shape[0] < config.MIN_IMAGE_DIMENSION or img.shape[1] < config.MIN_IMAGE_DIMENSION:
+            return None, "Image too small ({}x{})".format(img.shape[1], img.shape[0])
+            
+        return img, None
         
     except Exception as e:
-        return None, "Error loading image: {}".format(str(e))
+        return None, "Error loading image: {}".format(e)
+
+def check_and_load_helper(path):
+    """
+    Helper function for parallel pre-validation.
+    Must be at top-level to be picklable by multiprocessing.
+    """
+    img, error = load_and_validate_image(path)
+    if not error:
+        return (os.path.basename(path), img)
+    return None
+
+def pre_validate_dataset(file_list, root_path, load_images=True):
+    """
+    Pre-validate all image files in parallel and optionally load them into memory.
+    Global level function for modular use in main/train.
+    """
+    if not file_list:
+        return [], {}
+        
+    logger.warning('Pre-validating %d images in %s (load_images=%s)...', 
+                   len(file_list), root_path, load_images)
+    start_time = time.time()
+    
+    from multiprocessing import Pool
+    num_workers = min(getattr(config, 'PREPROCESS_WORKERS', 4), len(file_list))
+    
+    full_paths = [os.path.join(root_path, f) for f in file_list]
+    
+    valid_files = []
+    image_cache = {}
+    
+    with Pool(processes=num_workers) as pool:
+        # results contains tuples of (filename, image_data)
+        results = pool.map(check_and_load_helper, full_paths)
+        for res in results:
+            if res:
+                fname, data = res
+                valid_files.append(fname)
+                if load_images:
+                    image_cache[fname] = data
+        
+    duration = time.time() - start_time
+    logger.warning('Pre-validation complete: %d/%d valid images found in %.2fs', 
+                   len(valid_files), len(file_list), duration)
+    return valid_files, image_cache
+
+# Actor-Critic 모델 생성
 
 
 def validate_aspect_ratio(bbox, min_ratio=config.MIN_ASPECT_RATIO, max_ratio=config.MAX_ASPECT_RATIO):
@@ -869,16 +916,49 @@ class A3CAgent:
 
 
     # 쓰레드를 만들어 학습을 하는 함수
-    def train(self, train_path=None, start_fold=0, start_epoch=0):
+    def train(self, train_path=None, start_fold=0, start_epoch=0, 
+              train_files=None, val_files=None, train_cache=None, val_cache=None):
         self.start_time = time.time()
         logger.info('Training started at: %s', datetime.fromtimestamp(self.start_time).strftime('%Y-%m-%d %H:%M:%S'))
         
         if train_path is None:
             train_path = config.TRAIN_PATH
             
-        # Get all valid training files
-        all_files = [f for f in os.listdir(train_path) if os.path.isfile(os.path.join(train_path, f))]
-        train_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+        # Use provided or cached data if available
+        if train_cache is not None:
+             self.train_image_cache = train_cache
+        elif not hasattr(self, 'train_image_cache'):
+             self.train_image_cache = {}
+
+        if val_cache is not None:
+             self.val_image_cache = val_cache
+        elif not hasattr(self, 'val_image_cache'):
+             self.val_image_cache = {}
+
+        # 1. Training Dataset Setup
+        if train_files is not None:
+            logger.info('Using pre-validated training list with %d images', len(train_files))
+        else:
+            # Discovery and validation if not provided
+            all_files = [f for f in os.listdir(train_path) if os.path.isfile(os.path.join(train_path, f))]
+            raw_train_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+            train_files, self.train_image_cache = pre_validate_dataset(raw_train_files, train_path, load_images=True)
+        
+        if not train_files:
+            logger.error('No valid training images found. Check data or config.')
+            return
+
+        # 2. Validation Dataset Setup
+        if val_files is not None:
+            logger.info('Using pre-validated validation list with %d images', len(val_files))
+        else:
+            if hasattr(config, 'VAL_PATH') and os.path.exists(config.VAL_PATH):
+                all_v_files = [f for f in os.listdir(config.VAL_PATH) if os.path.isfile(os.path.join(config.VAL_PATH, f))]
+                raw_val_files = [f for f in all_v_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+                val_files, self.val_image_cache = pre_validate_dataset(raw_val_files, config.VAL_PATH, load_images=True)
+                logger.info('Loaded %d valid images into validation cache', len(val_files))
+            else:
+                val_files = []
         
         # Curriculum Learning: Pre-score and sort
         if config.CURRICULUM_LEARNING:
@@ -979,13 +1059,7 @@ class A3CAgent:
             logger.info('All folds completed.')
             return
         else:
-            # Load validation files from VAL_PATH if it exists
-            val_files = []
-            if hasattr(config, 'VAL_PATH') and os.path.exists(config.VAL_PATH):
-                val_files = [f for f in os.listdir(config.VAL_PATH) if os.path.isfile(os.path.join(config.VAL_PATH, f))]
-                val_files = [f for f in val_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
-                logger.info('Loaded %d validation images from %s', len(val_files), config.VAL_PATH)
-            
+            # Split images and pass to agents
             agents = []
             for i in range(self.threads):
                 agent_train_files = train_files[i::self.threads] if train_files else None
@@ -1530,9 +1604,25 @@ class Agent(threading.Thread):
         images_filename = []
         
         for i, x in enumerate(trainfiles_batch_fullname):
-            # Reduce logging frequency in Kaggle
+            fname = os.path.basename(x)
+            img = None
+            
+            # Use cache if available
+            if self.brain:
+                if fname in self.brain.train_image_cache:
+                    img = self.brain.train_image_cache[fname]
+                elif fname in self.brain.val_image_cache:
+                    img = self.brain.val_image_cache[fname]
+            
+            if img is not None:
+                images.append(img)
+                images_filename.append(x)
+                self.total_images_processed += 1
+                continue
+
+            # Fallback to loading from disk (should be rare if pre-validated)
             if i % config.LOG_INTERVAL_IMAGE_LOADING == 0 or i == len(trainfiles_batch_fullname) - 1:
-                logger.info('Thread %d - Loading image %d/%d...', self.thread_id, i + 1, len(trainfiles_batch_fullname))
+                logger.info('Thread %d - Loading image %d/%d (Fallback)...', self.thread_id, i + 1, len(trainfiles_batch_fullname))
             
             img, error = load_and_validate_image(x)
             
@@ -2623,10 +2713,35 @@ if __name__ == "__main__":
             logger.warning('Resuming from Fold {}, Epoch {}, Episode {}'.format(start_fold + 1, start_epoch, episode))
         else:
             logger.warning('Resume specified but metadata not found. Starting from scratch with loaded weights.')
+    
+    # 1. Prepare Datasets before Training (Discovery + Pre-validation)
+    logger.warning("="*60)
+    logger.warning("DATASET PREPARATION")
+    logger.warning("="*60)
+    
+    # Discovery and pre-validation for Training Set
+    all_files = [f for f in os.listdir(train_path) if os.path.isfile(os.path.join(train_path, f))]
+    raw_train_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+    train_files, train_cache = pre_validate_dataset(raw_train_files, train_path, load_images=True)
+    
+    # Discovery and pre-validation for Validation Set
+    val_files = []
+    val_cache = {}
+    if hasattr(config, 'VAL_PATH') and os.path.exists(config.VAL_PATH):
+        all_v_files = [f for f in os.listdir(config.VAL_PATH) if os.path.isfile(os.path.join(config.VAL_PATH, f))]
+        raw_val_files = [f for f in all_v_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+        val_files, val_cache = pre_validate_dataset(raw_val_files, config.VAL_PATH, load_images=True)
+
+    if not train_files:
+        logger.error('No valid training images found after pre-validation. Exiting.')
+        sys.exit(1)
+
     total_epochs = 0
     total_elapsed = 0
     try:
-        global_agent.train(train_path=train_path, start_fold=start_fold, start_epoch=start_epoch)
+        global_agent.train(train_path=train_path, start_fold=start_fold, start_epoch=start_epoch,
+                          train_files=train_files, val_files=val_files, 
+                          train_cache=train_cache, val_cache=val_cache)
         
         # Save Final Model
         time_str_final = datetime.now().strftime("%H%M%S")
