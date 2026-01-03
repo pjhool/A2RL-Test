@@ -1525,6 +1525,8 @@ class Agent(threading.Thread):
         self.epoch_total_loss = 0.0
         self.epoch_episode_count = 0
         self.epoch_update_count = 0
+        self.epoch_improved_count = 0
+        self.epoch_decreased_count = 0
 
         # Feature scaling setup
         self.enable_feature_scaling = config.ENABLE_FEATURE_SCALING
@@ -1928,6 +1930,13 @@ class Agent(threading.Thread):
                         self.epoch_total_p_max += (self.avg_p_max / float(step)) if step > 0 else 0
                         self.epoch_total_loss += self.avg_loss
                         total_loss += self.avg_loss
+                        
+                        # Count improvement/decrease
+                        if new_scores[0] > global_score:
+                            self.epoch_improved_count += 1
+                        elif new_scores[0] < global_score:
+                            self.epoch_decreased_count += 1
+                            
                         self.epoch_episode_count += 1
                 
                 # Print error statistics periodically
@@ -2290,6 +2299,8 @@ class Agent(threading.Thread):
             self.epoch_total_loss = 0.0
             self.epoch_episode_count = 0
             self.epoch_update_count = 0
+            self.epoch_improved_count = 0
+            self.epoch_decreased_count = 0
             
             # num_batches processes images in batches
             # Calculate specifically based on current list size
@@ -2317,6 +2328,7 @@ class Agent(threading.Thread):
                 logger.warning("  Avg Steps/Episode:  %.2f", epoch_avg_steps)
                 logger.warning("  Avg Max Prob/Ep:    %.4f", epoch_avg_p_max)
                 logger.warning("  Avg Loss/Update:    %.6f", epoch_avg_loss)
+                logger.warning("  Improvement Counts: Improved=%d, Decreased=%d", self.epoch_improved_count, self.epoch_decreased_count)
                 logger.warning("="*72)
                 
                 # Add Epoch-level metrics to TensorBoard
@@ -2327,6 +2339,8 @@ class Agent(threading.Thread):
                     epoch_summary.value.add(tag='Epoch/Average Final Score', simple_value=float(epoch_avg_final))
                     epoch_summary.value.add(tag='Epoch/Average Improvement', simple_value=float(epoch_improvement))
                     epoch_summary.value.add(tag='Epoch/Improvement Percentage', simple_value=float(epoch_imp_pct))
+                    epoch_summary.value.add(tag='Epoch/Count Improved', simple_value=float(self.epoch_improved_count))
+                    epoch_summary.value.add(tag='Epoch/Count Decreased', simple_value=float(self.epoch_decreased_count))
                     epoch_summary.value.add(tag='Epoch/Average Steps', simple_value=float(epoch_avg_steps))
                     
                     self.summary_writer.add_summary(epoch_summary, epoch_step + 1)
