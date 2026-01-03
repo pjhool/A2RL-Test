@@ -979,19 +979,30 @@ class A3CAgent:
             logger.info('All folds completed.')
             return
         else:
-            # Standard training mode
-            agents = [Agent(self.action_size, self.state_size,
-                            [self.actor, self.critic], self.sess,
-                            self.optimizer, self.discount_factor,
-                             [self.summary_op, self.summary_placeholders,
-                              self.update_ops, self.summary_writer],
-                             train_path=train_path,
-                             #train_files=train_files[i::self.threads], # Pass sorted slice
-                             start_epoch=start_epoch,
-                             current_fold=0,
-                             thread_id=i,
-                             brain=self)
-                       for i in range(self.threads)]
+            # Load validation files from VAL_PATH if it exists
+            val_files = []
+            if hasattr(config, 'VAL_PATH') and os.path.exists(config.VAL_PATH):
+                val_files = [f for f in os.listdir(config.VAL_PATH) if os.path.isfile(os.path.join(config.VAL_PATH, f))]
+                val_files = [f for f in val_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
+                logger.info('Loaded %d validation images from %s', len(val_files), config.VAL_PATH)
+            
+            agents = []
+            for i in range(self.threads):
+                agent_train_files = train_files[i::self.threads] if train_files else None
+                agent_val_files = val_files[i::self.threads] if val_files else None
+                
+                agents.append(Agent(self.action_size, self.state_size,
+                                [self.actor, self.critic], self.sess,
+                                self.optimizer, self.discount_factor,
+                                [self.summary_op, self.summary_placeholders,
+                                 self.update_ops, self.summary_writer],
+                                train_path=train_path,
+                                train_files=agent_train_files,
+                                val_files=agent_val_files,
+                                start_epoch=start_epoch,
+                                current_fold=0,
+                                thread_id=i,
+                                brain=self))
 
             # 각 쓰레드 시작
             for agent in agents:
@@ -1899,36 +1910,64 @@ class Agent(threading.Thread):
             if not config.IS_KAGGLE or batch_idx % 10 == 0:
                 logger.info('Batch %d/%d completed in %.2f seconds', batch_idx + 1, num_batches, batch_duration)
 
-    def validate_episode(self, TrainPath, file_list, verbose=True):
+    def validate_episode(self, ValPath, file_list, verbose=True):
         """
-        Run episodes on validation set without training.
+        Run episodes on validation set without training and return stats.
         """
-        logger.info('=== Validation Phase ===')
-        # Reset current_batch_index for validation if it was used sequentially
+        logger.info('Thread %d - === Validation Phase (Images: %d) ===', self.thread_id, len(file_list))
+        
+        # Reset epoch stats specifically for validation tracking
+        val_initial_score = 0.0
+        val_final_score = 0.0
+        val_episode_count = 0
+        
+        # Reset current_batch_index for validation
         old_batch_index = self.current_batch_index
         self.current_batch_index = 0
         
-        # Calculate number of batches for validation
         num_batches = (len(file_list) + self.batch_size - 1) // self.batch_size
         
         # Temporarily override train_model to do nothing
         original_train_model = self.train_model
         self.train_model = lambda done: None
         
+        # We also need to prevent validation episodes from updating epoch_xxx global-like counters
+        # We'll save and restore them
+        old_epoch_initial = self.epoch_initial_score
+        old_epoch_final = self.epoch_final_score
+        old_epoch_count = self.epoch_episode_count
+        
+        self.epoch_initial_score = 0.0
+        self.epoch_final_score = 0.0
+        self.epoch_episode_count = 0
+        
         try:
             for batch_idx in range(num_batches):
                 images, images_filename = self._load_and_validate_batch(
-                    TrainPath, self.batch_size, use_random_sampling=False, file_list=file_list)
+                    ValPath, self.batch_size, use_random_sampling=False, file_list=file_list)
                 
                 for j in range(len(images)):
                     filename = images_filename[j] if verbose else None
                     self._process_single_image(images[j], filename)
+            
+            val_initial_score = self.epoch_initial_score
+            val_final_score = self.epoch_final_score
+            val_episode_count = self.epoch_episode_count
+            
         finally:
-            # Restore original train_model
+            # Restore original state
             self.train_model = original_train_model
             self.current_batch_index = old_batch_index
+            self.epoch_initial_score = old_epoch_initial
+            self.epoch_final_score = old_epoch_final
+            self.epoch_episode_count = old_epoch_count
         
-        logger.info('=== Validation Finished ===')
+        avg_imp = 0.0
+        if val_episode_count > 0:
+            avg_imp = (val_final_score - val_initial_score) / val_episode_count
+            
+        logger.info('Thread %d - === Validation Finished (Avg Improvement: %.4f) ===', self.thread_id, avg_imp)
+        return {'avg_improvement': avg_imp}
 
     #  This is the      definition      of      helper      function
 
@@ -2206,8 +2245,24 @@ class Agent(threading.Thread):
             # Validation phase
             if (epoch_step + 1) % config.VALIDATION_FREQ == 0:
                 val_list = self.val_files
-                if val_list:
-                    self.validate_episode(TrainPath, val_list, verbose=True)
+                if config.USE_K_FOLD:
+                    ValPath = TrainPath
+                else:
+                    ValPath = config.VAL_PATH if hasattr(config, 'VAL_PATH') else TrainPath
+                
+                if val_list and os.path.exists(ValPath):
+                    val_stats = self.validate_episode(ValPath, val_list, verbose=True)
+                    
+                    # Log validation improvement to TensorBoard
+                    if hasattr(self, 'summary_writer') and self.summary_writer is not None:
+                        val_summary = tf.Summary()
+                        val_summary.value.add(tag='Validation/Average Improvement', 
+                                            simple_value=float(val_stats['avg_improvement']))
+                        # We use epoch_step + 1 as the global step for validation
+                        self.summary_writer.add_summary(val_summary, epoch_step + 1)
+                        self.summary_writer.flush()
+                        logger.warning('Thread %d - Logged Validation Improvement to TensorBoard: %.4f', 
+                                     self.thread_id, val_stats['avg_improvement'])
             
             # Save periodic checkpoint including metadata
             # Only one thread needs to handle periodic saving to avoid conflicts

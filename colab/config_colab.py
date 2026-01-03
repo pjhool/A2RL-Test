@@ -38,7 +38,8 @@ else:
     DATA_ROOT = './data'
     LOG_SUMMARY_ROOT = './'
 
-TRAIN_PATH = DATA_ROOT # Update this if data is elsewhere
+TRAIN_PATH = os.path.join(DATA_ROOT, 'train')
+VAL_PATH = os.path.join(DATA_ROOT, 'val')
       
 MODEL_SNAPSHOT = os.path.join(DRIVE_ROOT, 'a2rl_model/model-spp-max')
 if IS_COLAB:
@@ -58,7 +59,7 @@ CRITIC_LR = 1.5e-5
 DISCOUNT_FACTOR = 0.99
 #BETA = 0.1
 BETA = float(os.environ.get('A2RL_BETA', '0.15'))
-CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '1'))) # 1=True, Sort by score low to high
+CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '0'))) # 1=True, Sort by score low to high
 LOAD_WEIGHTS = os.environ.get('A2RL_LOAD_WEIGHTS')
 
 # Environment variable support for runtime configuration
@@ -84,8 +85,9 @@ MAX_EPISODES = int(os.environ.get('A2RL_MAX_EPISODES', '20000'))
 MAX_TRAIN_HOURS = float(os.environ.get('A2RL_MAX_TRAIN_HOURS', '0')) # 0 means no limit
 
 # preprocess parameters
-
-INITIAL_SCORE_THRESHOLD = 10.0
+# for ava dataset 
+#INITIAL_SCORE_THRESHOLD = 10.0
+INITIAL_SCORE_THRESHOLD = 50.0
 PREPROCESS_BATCH_SIZE = 64
 PREPROCESS_WORKERS = 2 # Reduced for Colab
 FILTERED_TRAIN_PATH = DATA_ROOT + '/Filtered_Train'
