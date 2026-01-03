@@ -37,9 +37,13 @@ def start_tensorboard(log_dir='/kaggle/working/summary/A2RL_a3c'):
     # Load TensorBoard extension
     try:
         # For Jupyter/Kaggle notebooks
-        # Reloading extension can help if it was already loaded in a broken state
-        get_ipython().run_line_magic('reload_ext', 'tensorboard')
-        
+        # Try loading first, if already loaded it might print a warning but that's fine.
+        # If it fails (e.g. strict mode), we try reload.
+        try:
+            get_ipython().run_line_magic('load_ext', 'tensorboard')
+        except:
+            get_ipython().run_line_magic('reload_ext', 'tensorboard')
+            
         # Start TensorBoard with bind_all which is often needed in containerized environments
         get_ipython().run_line_magic('tensorboard', f'--logdir {log_dir} --bind_all')
         
