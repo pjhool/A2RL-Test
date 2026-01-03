@@ -26,7 +26,7 @@ elif IS_KAGGLE:
     print("Config: Detected Kaggle Environment")
     # Kaggle directory structure
     DRIVE_ROOT = '/kaggle/working/A2RL-Test' # Output directory
-    DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', '/kaggle/input/a2rl-data')    # Read-only input data
+    DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', '/kaggle/input/a2rl-ava')    # Read-only input data
     EVAL_DATA_ROOT = os.environ.get('A2RL_EVAL_DATA_ROOT', '/kaggle/input/a2rl-data')
     LOG_SUMMARY_ROOT = '/kaggle/working'     # Writable output directory
     
