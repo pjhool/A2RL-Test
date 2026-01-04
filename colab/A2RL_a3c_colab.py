@@ -1271,17 +1271,20 @@ class A3CAgent:
         opt_kwargs[K_LR_NAME] = self.actor_lr
         optimizer = RMSprop(**opt_kwargs)
 
-        # Monkey-patch get_gradients to apply Gradient Clipping
+        # Monkey-patch get_gradients to apply Gradient Clipping (if enabled)
         original_get_gradients = optimizer.get_gradients
         def get_clipped_gradients(loss, params):
             grads = K.gradients(loss, params)
             # Handle potential None gradients
             grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
             
-            # Apply gradient clipping (norm calculation is done internally)
-            clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
-            
-            return clipped_grads
+            if config.ENABLE_GRAD_CLIP:
+                # Apply gradient clipping (norm calculation is done internally)
+                clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
+                return clipped_grads
+            else:
+                # Return gradients without clipping
+                return grads
 
         optimizer.get_gradients = get_clipped_gradients
         updates = optimizer.get_updates(loss, self.actor.trainable_weights)
@@ -1317,15 +1320,18 @@ class A3CAgent:
         opt_kwargs[K_LR_NAME] = self.critic_lr
         optimizer = RMSprop(**opt_kwargs)
 
-        # Monkey-patch get_gradients to apply Gradient Clipping
+        # Monkey-patch get_gradients to apply Gradient Clipping (if enabled)
         def get_clipped_gradients_critic(loss, params):
             grads = K.gradients(loss, params)
             grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
             
-            # Apply gradient clipping (norm calculation is done internally)
-            clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
-            
-            return clipped_grads
+            if config.ENABLE_GRAD_CLIP:
+                # Apply gradient clipping (norm calculation is done internally)
+                clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
+                return clipped_grads
+            else:
+                # Return gradients without clipping
+                return grads
 
         optimizer.get_gradients = get_clipped_gradients_critic
         updates = optimizer.get_updates(loss, self.critic.trainable_weights)
