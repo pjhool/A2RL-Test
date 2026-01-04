@@ -1261,6 +1261,26 @@ class A3CAgent:
         opt_kwargs = {'rho': 0.99, 'epsilon': 0.01}
         opt_kwargs[K_LR_NAME] = self.actor_lr
         optimizer = RMSprop(**opt_kwargs)
+
+        # Monkey-patch get_gradients to apply Gradient Clipping & Logging
+        original_get_gradients = optimizer.get_gradients
+        def get_clipped_gradients(loss, params):
+            grads = K.gradients(loss, params)
+            # Handle potential None gradients
+            grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
+            
+            norm_before = tf.linalg.global_norm(grads)
+            clipped_grads, _ = tf.clip_by_global_norm(grads, 40.0)
+            norm_after = tf.linalg.global_norm(clipped_grads)
+            
+            # Log norms using tf.Print (Output appears in console/stderr)
+            # Attaching Print op to the first gradient to ensure execution
+            printed_grad = tf.Print(clipped_grads[0], [norm_before, norm_after], message="Actor Grad Norm Pre/Post: ")
+            clipped_grads[0] = printed_grad
+            
+            return clipped_grads
+
+        optimizer.get_gradients = get_clipped_gradients
         updates = optimizer.get_updates(loss, self.actor.trainable_weights)
         
         # Combine model inputs with custom inputs
@@ -1293,6 +1313,22 @@ class A3CAgent:
         opt_kwargs = {'rho': 0.99, 'epsilon': 0.01}
         opt_kwargs[K_LR_NAME] = self.critic_lr
         optimizer = RMSprop(**opt_kwargs)
+
+        # Monkey-patch get_gradients to apply Gradient Clipping & Logging
+        def get_clipped_gradients_critic(loss, params):
+            grads = K.gradients(loss, params)
+            grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
+            
+            norm_before = tf.linalg.global_norm(grads)
+            clipped_grads, _ = tf.clip_by_global_norm(grads, 40.0)
+            norm_after = tf.linalg.global_norm(clipped_grads)
+            
+            printed_grad = tf.Print(clipped_grads[0], [norm_before, norm_after], message="Critic Grad Norm Pre/Post: ")
+            clipped_grads[0] = printed_grad
+            
+            return clipped_grads
+
+        optimizer.get_gradients = get_clipped_gradients_critic
         updates = optimizer.get_updates(loss, self.critic.trainable_weights)
         
         # Combine model inputs with custom inputs
