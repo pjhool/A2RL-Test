@@ -143,6 +143,15 @@ global_dtype = tf.float32
 
 global_dtype_np = np.float32
 
+global_dtype_np = np.float32
+
+# Helper for Gradient Logging via tf.py_func
+def _log_grad_norm(name_bytes, pre_norm, post_norm):
+    if config.GRAD_CLIP_DEBUG or os.environ.get('GRADIENT_CLIP_DEBUG') == '1':
+        name = name_bytes.decode('utf-8')
+        logger.info(f"{name} Grad Norm Pre/Post: {pre_norm:.4f} / {post_norm:.4f}")
+    return np.float32(0.0)
+
 #vfn_sess = None
 
 # 멀티쓰레딩을 위한 글로벌 변수
@@ -1270,13 +1279,15 @@ class A3CAgent:
             grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
             
             norm_before = tf.linalg.global_norm(grads)
-            clipped_grads, _ = tf.clip_by_global_norm(grads, 40.0)
+            clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
             norm_after = tf.linalg.global_norm(clipped_grads)
             
-            # Log norms using tf.Print (Output appears in console/stderr)
-            # Attaching Print op to the first gradient to ensure execution
-            printed_grad = tf.Print(clipped_grads[0], [norm_before, norm_after], message="Actor Grad Norm Pre/Post: ")
-            clipped_grads[0] = printed_grad
+            # Log norms using tf.py_func to use Python logger (INFO level)
+            log_op = tf.py_func(_log_grad_norm, [tf.constant("Actor"), norm_before, norm_after], tf.float32)
+            
+            # Ensure logging happens
+            with tf.control_dependencies([log_op]):
+                 clipped_grads = [tf.identity(g) for g in clipped_grads]
             
             return clipped_grads
 
@@ -1320,11 +1331,14 @@ class A3CAgent:
             grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
             
             norm_before = tf.linalg.global_norm(grads)
-            clipped_grads, _ = tf.clip_by_global_norm(grads, 40.0)
+            clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
             norm_after = tf.linalg.global_norm(clipped_grads)
             
-            printed_grad = tf.Print(clipped_grads[0], [norm_before, norm_after], message="Critic Grad Norm Pre/Post: ")
-            clipped_grads[0] = printed_grad
+            # Log norms using tf.py_func
+            log_op = tf.py_func(_log_grad_norm, [tf.constant("Critic"), norm_before, norm_after], tf.float32)
+            
+            with tf.control_dependencies([log_op]):
+                 clipped_grads = [tf.identity(g) for g in clipped_grads]
             
             return clipped_grads
 

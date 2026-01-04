@@ -64,6 +64,8 @@ DISCOUNT_FACTOR = 0.99
 BETA = float(os.environ.get('A2RL_BETA', '0.15'))
 CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '0'))) # 1=True, Sort by score low to high
 LOAD_WEIGHTS = os.environ.get('A2RL_LOAD_WEIGHTS')
+GRAD_CLIP_NORM = float(os.environ.get('A2RL_GRAD_CLIP_NORM', '40.0'))
+GRAD_CLIP_DEBUG = bool(int(os.environ.get('A2RL_GRAD_CLIP_DEBUG', '0')))
 
 # Environment variable support for runtime configuration
 THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Colab usually gives 2 cores
