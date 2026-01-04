@@ -57,7 +57,7 @@ from skimage.transform import resize
 # Robust Keras/TensorFlow Compatibility Layer
 try:
     import tf_keras as keras
-    from tf_keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D
+    from tf_keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D, LayerNormalization, Activation
     from tf_keras import backend as K
     from tf_keras.models import Model
     try:
@@ -68,7 +68,7 @@ try:
     if not config.IS_KAGGLE:  # Only print in non-Kaggle environments
         print("DEBUG: Using tf_keras (Legacy Keras)")
 except ImportError:
-    from tensorflow.keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D
+    from tensorflow.keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D, LayerNormalization, Activation
     from tensorflow.keras import backend as K
     from tensorflow.keras.models import Model
     try:
@@ -1185,26 +1185,48 @@ class A3CAgent:
             # features=2000: Global (1000) + Local (1000) features
             input = Input(batch_shape=(1, 1, 2000))
 
-        # Dense layer processes current observation
-            fc1 = Dense(256, activation='relu')(input)
+            # Dense layer processes current observation
+            if config.USE_LAYER_NORM:
+                fc1_dense = Dense(256)(input)
+                fc1_ln = LayerNormalization()(fc1_dense)
+                fc1 = Activation('relu')(fc1_ln)
+            else:
+                fc1 = Dense(256, activation='relu')(input)
         
-        # Stateful LSTM maintains hidden state across steps within episode
-        # This enables temporal context learning and episode coherence
+            # Stateful LSTM maintains hidden state across steps within episode
+            # This enables temporal context learning and episode coherence
             lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
             policy = Dense(self.action_size, activation='softmax')(lstm1)
             value = Dense(1, activation='linear')(lstm1)
             logger.info("Built stateful LSTM models - Actor & Critic")
             logger.info("  Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000")
+            if config.USE_LAYER_NORM:
+                logger.info("  Layer Normalization: ENABLED")
         else:
             # FEED-FORWARD ARCHITECTURE (MLP)
             # Standard input shape (None, 2000)
             input = Input(shape=(2000,))
-            fc1 = Dense(512, activation='relu')(input)
-            fc2 = Dense(512, activation='relu')(fc1)
+            
+            if config.USE_LAYER_NORM:
+                # MLP with Layer Normalization
+                fc1_dense = Dense(512)(input)
+                fc1_ln = LayerNormalization()(fc1_dense)
+                fc1 = Activation('relu')(fc1_ln)
+                
+                fc2_dense = Dense(512)(fc1)
+                fc2_ln = LayerNormalization()(fc2_dense)
+                fc2 = Activation('relu')(fc2_ln)
+            else:
+                # MLP without normalization (original)
+                fc1 = Dense(512, activation='relu')(input)
+                fc2 = Dense(512, activation='relu')(fc1)
+            
             policy = Dense(self.action_size, activation='softmax')(fc2)
             value = Dense(1, activation='linear')(fc2)
             logger.info("Built Feed-Forward MLP models - Actor & Critic")
             logger.info("  Input shape: (None, 2000)")
+            if config.USE_LAYER_NORM:
+                logger.info("  Layer Normalization: ENABLED")
 
         actor = Model(inputs=input, outputs=policy)
         critic = Model(inputs=input, outputs=value)
@@ -1214,7 +1236,9 @@ class A3CAgent:
             actor._make_predict_function()
         if hasattr(critic, '_make_predict_function'):
             critic._make_predict_function()
-        logger.info("  LSTM maintains state across episode steps for temporal learning")
+        
+        if config.USE_LSTM:
+            logger.info("  LSTM maintains state across episode steps for temporal learning")
 
         return actor, critic
 

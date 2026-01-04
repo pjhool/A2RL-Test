@@ -126,6 +126,7 @@ POOLING = 'max'
 ACTION_SIZE = 14
 # Network Architecture Selection
 USE_LSTM = bool(int(os.environ.get('A2RL_USE_LSTM', '0')))  # 0=False(MLP), 1=True(LSTM)
+USE_LAYER_NORM = bool(int(os.environ.get('A2RL_USE_LAYER_NORM', '0')))  # 0=False (default), 1=True
 
 # --- Feature Scaling Settings ---
 ENABLE_FEATURE_SCALING = True
