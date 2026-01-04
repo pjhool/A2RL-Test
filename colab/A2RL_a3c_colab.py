@@ -1168,22 +1168,34 @@ class A3CAgent:
             except Exception:
                 pass
 
-        # STATEFUL LSTM ARCHITECTURE
-        # batch_shape=(batch_size, timesteps, features)
-        # batch_size=1: Required for stateful LSTM (fixed batch size)
-        # timesteps=1: Single observation per forward pass
-        # features=2000: Global (1000) + Local (1000) features
-        input = Input(batch_shape=(1, 1, 2000))
+        if config.USE_LSTM:
+            # STATEFUL LSTM ARCHITECTURE
+            # batch_shape=(batch_size, timesteps, features)
+            # batch_size=1: Required for stateful LSTM (fixed batch size)
+            # timesteps=1: Single observation per forward pass
+            # features=2000: Global (1000) + Local (1000) features
+            input = Input(batch_shape=(1, 1, 2000))
 
         # Dense layer processes current observation
-        fc1 = Dense(256, activation='relu')(input)
+            fc1 = Dense(256, activation='relu')(input)
         
         # Stateful LSTM maintains hidden state across steps within episode
         # This enables temporal context learning and episode coherence
-        lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
-
-        policy = Dense(self.action_size, activation='softmax')(lstm1)
-        value = Dense(1, activation='linear')(lstm1)
+            lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
+            policy = Dense(self.action_size, activation='softmax')(lstm1)
+            value = Dense(1, activation='linear')(lstm1)
+            logger.info("Built stateful LSTM models - Actor & Critic")
+            logger.info("  Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000")
+        else:
+            # FEED-FORWARD ARCHITECTURE (MLP)
+            # Standard input shape (None, 2000)
+            input = Input(shape=(2000,))
+            fc1 = Dense(512, activation='relu')(input)
+            fc2 = Dense(512, activation='relu')(fc1)
+            policy = Dense(self.action_size, activation='softmax')(fc2)
+            value = Dense(1, activation='linear')(fc2)
+            logger.info("Built Feed-Forward MLP models - Actor & Critic")
+            logger.info("  Input shape: (None, 2000)")
 
         actor = Model(inputs=input, outputs=policy)
         critic = Model(inputs=input, outputs=value)
@@ -1193,12 +1205,10 @@ class A3CAgent:
             actor._make_predict_function()
         if hasattr(critic, '_make_predict_function'):
             critic._make_predict_function()
-
-        logger.info("Built stateful LSTM models - Actor & Critic")
-        logger.info("  Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000")
         logger.info("  LSTM maintains state across episode steps for temporal learning")
 
         return actor, critic
+
 
 
 
@@ -1218,10 +1228,13 @@ class A3CAgent:
         else:
             try:
                 action = K.placeholder(shape=[None, self.action_size])
-                advantages = K.placeholder(shape=[None, ])
+                # Fix dimensions: Accept (None, 1) to prevent broadcasting errors
+                advantages_raw = K.placeholder(shape=[None, 1])
+                advantages = K.flatten(advantages_raw)
             except (AttributeError, TypeError):
                 action = tf.placeholder(dtype=global_dtype, shape=[None, self.action_size])
-                advantages = tf.placeholder(dtype=global_dtype, shape=[None, ])
+                advantages_raw = tf.placeholder(dtype=global_dtype, shape=[None, 1])
+                advantages = tf.flatten(advantages_raw)
             policy = self.actor.output
 
         # In Keras 3, the order matters when mixing KerasTensors and raw Tensors/Placeholders.
@@ -1251,7 +1264,7 @@ class A3CAgent:
         updates = optimizer.get_updates(loss, self.actor.trainable_weights)
         
         # Combine model inputs with custom inputs
-        actual_inputs = self.actor.inputs + [action, (advantages_raw if not USING_TF_KERAS else advantages)]
+        actual_inputs = self.actor.inputs + [action, (advantages_raw if not USING_TF_KERAS else advantages_raw)]
         train = K.function(actual_inputs, [loss], updates=updates)
         return train
 
@@ -1266,9 +1279,10 @@ class A3CAgent:
             value = self.critic(self.critic.inputs[0])
         else:
             try:
-                discounted_prediction = K.placeholder(shape=(None,))
+                # Fix dimensions: (None, 1) to match Value output
+                discounted_prediction = K.placeholder(shape=(None, 1))
             except (AttributeError, TypeError):
-                discounted_prediction = tf.placeholder(dtype=global_dtype, shape=(None,))
+                discounted_prediction = tf.placeholder(dtype=global_dtype, shape=(None, 1))
             value = self.critic.output
 
         # [반환값 - 가치]의 제곱을 오류함수로 함
@@ -1655,11 +1669,11 @@ class Agent(threading.Thread):
         self.t = 0
         
         # CRITICAL: Reset LSTM states at episode start
-        # Stateful LSTM maintains hidden state across steps within episode
-        # Each new episode must start with clean state
-        logger.debug('Resetting LSTM states for new episode')
-        self.local_actor.reset_states()
-        self.local_critic.reset_states()
+        # Only needed for stateful LSTM
+        if config.USE_LSTM:
+            logger.debug('Resetting LSTM states for new episode')
+            self.local_actor.reset_states()
+            self.local_critic.reset_states()
         
         current_episode = 0
         with episode_lock:
@@ -2097,9 +2111,10 @@ class Agent(threading.Thread):
         ratios = np.array([[0, 0, 20, 20]])
         terminals = np.array([0])
         
-        # CRITICAL: Reset LSTM states for evaluation episode
-        self.local_actor.reset_states()
-        self.local_critic.reset_states()
+        # CRITICAL: Reset LSTM states for evaluation episode (Only if LSTM)
+        if config.USE_LSTM:
+            self.local_actor.reset_states()
+            self.local_critic.reset_states()
         
         # Initial scoring and feature extraction (Global)
         initial_scores, initial_features = evaluate_aesthetics_score([image])
@@ -2398,16 +2413,22 @@ class Agent(threading.Thread):
         discounted_prediction = self.discounted_prediction(self.rewards, done)
 
         # Prepare individual states
-        # history items are (1, 2000), need (1, 1, 2000) for stateful LSTM
-        states = [s.reshape(1, 1, 2000) for s in self.states]
+        if config.USE_LSTM:
+            # history items are (1, 2000), need (1, 1, 2000) for stateful LSTM
+            states = [s.reshape(1, 1, 2000) for s in self.states]
+        else:
+            # For MLP, ensure shape is (1, 2000)
+            states = [s.reshape(1, 2000) for s in self.states]
         
-        # Calculate values sequentially (Keras 3 stateful requirement)
+        # Calculate values
         values = []
         with a3c_graph.as_default():
             with self.sess.as_default():
-                # CRITICAL: Reset states before forward pass sequence
-                self.local_actor.reset_states()
-                self.local_critic.reset_states()
+                # CRITICAL: Reset states before forward pass sequence (Only LSTM)
+                if config.USE_LSTM:
+                    self.local_actor.reset_states()
+                    self.local_critic.reset_states()
+                    
                 for s in states:
                     v = self.local_critic.predict_on_batch(s)
                     values.append(v[0][0])
@@ -2420,23 +2441,49 @@ class Agent(threading.Thread):
         try:
             with a3c_graph.as_default():
                 with self.sess.as_default():
-                    # CRITICAL: Reset states before backprop sequence
-                    self.local_actor.reset_states()
-                    self.local_critic.reset_states()
-                    for i in range(len(states)):
-                        s = np.float32(states[i])
-                        a = np.vstack([self.actions[i]]) # (1, action_size)
-                        adv = np.array([advantages[i]], dtype=np.float32)
-                        target = np.array([discounted_prediction[i]], dtype=np.float32)
+                    if config.USE_LSTM:
+                        # SEQUENTIAL TRAINING for Stateful LSTM
+                        # We must update the model step-by-step to maintain proper LSTM state flow.
+                        # CRITICAL: Reset states before backprop sequence
+                        self.local_actor.reset_states()
+                        self.local_critic.reset_states()
+                        
+                        for i in range(len(states)):
+                            s = np.float32(states[i])
+                            a = np.vstack([self.actions[i]]) # (1, action_size)
+                            adv = np.array([advantages[i]], dtype=np.float32)
+                            target = np.array([discounted_prediction[i]], dtype=np.float32)
 
-                        # Perform update for this single step
-                        l_actor = self.optimizer[0]([s, a, adv])[0]
-                        l_critic = self.optimizer[1]([s, target])[0]
+                            # Perform update for this single step
+                            l_actor = self.optimizer[0]([s, a, adv])[0]
+                            l_critic = self.optimizer[1]([s, target])[0]
+                            batch_loss = (l_actor + l_critic)
+                            self.avg_loss += batch_loss
+                            with episode_lock:
+                                total_updates += 1
+                            self.epoch_update_count += 1
+                    else:
+                        # BATCH TRAINING for MLP
+                        # Process the entire episode as a single mini-batch for efficiency
+                        s_batch = np.vstack(states)
+                        a_batch = np.vstack(self.actions)
+                        adv_batch = advantages.reshape(-1, 1)
+                        target_batch = discounted_prediction.reshape(-1, 1)
+                        
+                        l_actor = self.optimizer[0]([s_batch, a_batch, adv_batch])[0]
+                        l_critic = self.optimizer[1]([s_batch, target_batch])[0]
+                        
+                        # Loss is already averaged/summed in optimizer, but avg_loss tracks per-step roughly
+                        # For consistency, we divide by steps
+                        steps = len(states)
                         batch_loss = (l_actor + l_critic)
-                        self.avg_loss += batch_loss
+                        self.avg_loss += batch_loss * steps # avg_loss is conventionally cumulative sum per episode
+                        
                         with episode_lock:
-                            total_updates += 1
-                        self.epoch_update_count += 1
+                            total_updates += steps # or 1 update? usually updates counts gradient applications.
+                            # But legacy used steps. Let's keep it 'steps' so total_updates reflects steps trained
+                            total_updates += steps 
+                        self.epoch_update_count += steps
             
         except Exception as e:
             logger.error("Error during sequential training: {}".format(str(e)))
@@ -2446,7 +2493,7 @@ class Agent(threading.Thread):
         self.states, self.actions, self.rewards = [], [], []
 
         # Reset LSTM states after episode completion
-        if done:
+        if done and config.USE_LSTM: # Only reset if LSTM is used
             logger.debug('Episode complete - resetting LSTM states')
             self.local_actor.reset_states()
             self.local_critic.reset_states()
@@ -2481,15 +2528,30 @@ class Agent(threading.Thread):
 
         # USE STATEFUL LSTM ARCHITECTURE (Must match A3CAgent.build_model)
         # Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000
-        input = Input(batch_shape=(1, 1, 2000))
-        fc1 = Dense(256, activation='relu')(input)
-        lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
+        if config.USE_LSTM:
+            input_shape = (1, 1, 2000) # For stateful LSTM
+        else:
+            input_shape = (1, 2000) # For MLP
 
-        policy = Dense(self.action_size, activation='softmax')(lstm1)
-        value = Dense(1, activation='linear')(lstm1)
+        input_layer = Input(batch_shape=input_shape)
 
-        local_actor = Model(inputs=input, outputs=policy)
-        local_critic = Model(inputs=input, outputs=value)
+        if config.USE_LSTM:
+            fc1 = Dense(256, activation='relu')(input_layer)
+            lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
+            policy_input = lstm1
+            value_input = lstm1
+        else:
+            # For MLP, match global architecture: Dense(512) -> Dense(512)
+            fc1 = Dense(512, activation='relu')(input_layer)
+            fc2 = Dense(512, activation='relu')(fc1)
+            policy_input = fc2
+            value_input = fc2
+
+        policy = Dense(self.action_size, activation='softmax')(policy_input)
+        value = Dense(1, activation='linear')(value_input)
+
+        local_actor = Model(inputs=input_layer, outputs=policy)
+        local_critic = Model(inputs=input_layer, outputs=value)
 
         local_actor._make_predict_function()
         local_critic._make_predict_function()
@@ -2541,9 +2603,12 @@ class Agent(threading.Thread):
         #history = np.float32(history / 255.)
         logger.debug('Getting action...')
         
-        # Standardize input handling: expand to (1, 1, 2000) for stateful LSTM
-        history = history.reshape(1, 1, 2000)
-        
+        # Reshape history based on architecture
+        if config.USE_LSTM:
+            history = np.reshape(history, (1, 1, 2000))
+        else:
+            history = np.reshape(history, (1, 2000))
+            
         with a3c_graph.as_default():
             with self.sess.as_default():
                 # predict_on_batch is more thread-safe and direct than predict()

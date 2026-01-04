@@ -121,6 +121,8 @@ RANKING_LOSS = 'svm'
 SPP = True
 POOLING = 'max'
 ACTION_SIZE = 14
+# Network Architecture Selection
+USE_LSTM = bool(int(os.environ.get('A2RL_USE_LSTM', '0')))  # 0=False(MLP), 1=True(LSTM)
 
 # --- Feature Scaling Settings ---
 ENABLE_FEATURE_SCALING = True
