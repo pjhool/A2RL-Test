@@ -1271,23 +1271,15 @@ class A3CAgent:
         opt_kwargs[K_LR_NAME] = self.actor_lr
         optimizer = RMSprop(**opt_kwargs)
 
-        # Monkey-patch get_gradients to apply Gradient Clipping & Logging
+        # Monkey-patch get_gradients to apply Gradient Clipping
         original_get_gradients = optimizer.get_gradients
         def get_clipped_gradients(loss, params):
             grads = K.gradients(loss, params)
             # Handle potential None gradients
             grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
             
-            norm_before = tf.linalg.global_norm(grads)
+            # Apply gradient clipping (norm calculation is done internally)
             clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
-            norm_after = tf.linalg.global_norm(clipped_grads)
-            
-            # Log norms using tf.py_func to use Python logger (INFO level)
-            #log_op = tf.py_func(_log_grad_norm, [tf.constant("Actor"), norm_before, norm_after], tf.float32)
-            
-            # Ensure logging happens
-            #with tf.control_dependencies([log_op]):
-                 #clipped_grads = [tf.identity(g) for g in clipped_grads]
             
             return clipped_grads
 
@@ -1325,20 +1317,13 @@ class A3CAgent:
         opt_kwargs[K_LR_NAME] = self.critic_lr
         optimizer = RMSprop(**opt_kwargs)
 
-        # Monkey-patch get_gradients to apply Gradient Clipping & Logging
+        # Monkey-patch get_gradients to apply Gradient Clipping
         def get_clipped_gradients_critic(loss, params):
             grads = K.gradients(loss, params)
             grads = [g if g is not None else tf.zeros_like(p) for g, p in zip(grads, params)]
             
-            norm_before = tf.linalg.global_norm(grads)
+            # Apply gradient clipping (norm calculation is done internally)
             clipped_grads, _ = tf.clip_by_global_norm(grads, config.GRAD_CLIP_NORM)
-            norm_after = tf.linalg.global_norm(clipped_grads)
-            
-            # Log norms using tf.py_func
-            #log_op = tf.py_func(_log_grad_norm, [tf.constant("Critic"), norm_before, norm_after], tf.float32)
-            
-            #with tf.control_dependencies([log_op]):
-                 #clipped_grads = [tf.identity(g) for g in clipped_grads]
             
             return clipped_grads
 
