@@ -2601,14 +2601,31 @@ class Agent(threading.Thread):
         input_layer = Input(batch_shape=input_shape)
 
         if config.USE_LSTM:
-            fc1 = Dense(256, activation='relu')(input_layer)
+            if config.USE_LAYER_NORM:
+                fc1_dense = Dense(256)(input_layer)
+                fc1_ln = LayerNormalization()(fc1_dense)
+                fc1 = Activation('relu')(fc1_ln)
+            else:
+                fc1 = Dense(256, activation='relu')(input_layer)
+            
             lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
             policy_input = lstm1
             value_input = lstm1
         else:
-            # For MLP, match global architecture: Dense(512) -> Dense(512)
-            fc1 = Dense(512, activation='relu')(input_layer)
-            fc2 = Dense(512, activation='relu')(fc1)
+            if config.USE_LAYER_NORM:
+                # MLP with Layer Normalization
+                fc1_dense = Dense(512)(input_layer)
+                fc1_ln = LayerNormalization()(fc1_dense)
+                fc1 = Activation('relu')(fc1_ln)
+                
+                fc2_dense = Dense(512)(fc1)
+                fc2_ln = LayerNormalization()(fc2_dense)
+                fc2 = Activation('relu')(fc2_ln)
+            else:
+                # MLP without normalization (original)
+                fc1 = Dense(512, activation='relu')(input_layer)
+                fc2 = Dense(512, activation='relu')(fc1)
+            
             policy_input = fc2
             value_input = fc2
 
