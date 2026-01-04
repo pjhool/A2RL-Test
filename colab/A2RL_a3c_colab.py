@@ -1283,11 +1283,11 @@ class A3CAgent:
             norm_after = tf.linalg.global_norm(clipped_grads)
             
             # Log norms using tf.py_func to use Python logger (INFO level)
-            log_op = tf.py_func(_log_grad_norm, [tf.constant("Actor"), norm_before, norm_after], tf.float32)
+            #log_op = tf.py_func(_log_grad_norm, [tf.constant("Actor"), norm_before, norm_after], tf.float32)
             
             # Ensure logging happens
-            with tf.control_dependencies([log_op]):
-                 clipped_grads = [tf.identity(g) for g in clipped_grads]
+            #with tf.control_dependencies([log_op]):
+                 #clipped_grads = [tf.identity(g) for g in clipped_grads]
             
             return clipped_grads
 
@@ -1335,10 +1335,10 @@ class A3CAgent:
             norm_after = tf.linalg.global_norm(clipped_grads)
             
             # Log norms using tf.py_func
-            log_op = tf.py_func(_log_grad_norm, [tf.constant("Critic"), norm_before, norm_after], tf.float32)
+            #log_op = tf.py_func(_log_grad_norm, [tf.constant("Critic"), norm_before, norm_after], tf.float32)
             
-            with tf.control_dependencies([log_op]):
-                 clipped_grads = [tf.identity(g) for g in clipped_grads]
+            #with tf.control_dependencies([log_op]):
+                 #clipped_grads = [tf.identity(g) for g in clipped_grads]
             
             return clipped_grads
 
