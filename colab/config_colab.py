@@ -105,7 +105,7 @@ USE_FILTERED_DATA = True
 #USE_K_FOLD = True
 USE_K_FOLD = bool(int(os.environ.get('A2RL_USE_K_FOLD', '0')))  # 0=False, 1=True
 K_FOLDS = int(os.environ.get('A2RL_K_FOLDS', '5'))
-VALIDATION_FREQ = 1 
+VALIDATION_FREQ = int(os.environ.get('A2RL_VALIDATION_FREQ', '5')) 
 
 # --- Image Validation Settings ---
 VALID_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
