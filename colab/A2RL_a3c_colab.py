@@ -1185,13 +1185,18 @@ class A3CAgent:
             # features=2000: Global (1000) + Local (1000) features
             input = Input(batch_shape=(1, 1, 2000))
 
+            x = input
+            # Apply Layer Normalization directly on the input features if enabled
+            if config.USE_LAYER_NORM:
+                x = LayerNormalization(name='input_ln')(x)
+
             # Dense layer processes current observation
             if config.USE_LAYER_NORM:
-                fc1_dense = Dense(256)(input)
+                fc1_dense = Dense(256)(x)
                 fc1_ln = LayerNormalization()(fc1_dense)
                 fc1 = Activation('relu')(fc1_ln)
             else:
-                fc1 = Dense(256, activation='relu')(input)
+                fc1 = Dense(256, activation='relu')(x)
         
             # Stateful LSTM maintains hidden state across steps within episode
             # This enables temporal context learning and episode coherence
@@ -1201,15 +1206,20 @@ class A3CAgent:
             logger.info("Built stateful LSTM models - Actor & Critic")
             logger.info("  Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000")
             if config.USE_LAYER_NORM:
-                logger.info("  Layer Normalization: ENABLED")
+                logger.info("  Layer Normalization: ENABLED (Input + Hidden)")
         else:
             # FEED-FORWARD ARCHITECTURE (MLP)
             # Standard input shape (None, 2000)
             input = Input(shape=(2000,))
             
+            x = input
+            # Apply Layer Normalization directly on the input features if enabled
+            if config.USE_LAYER_NORM:
+                x = LayerNormalization(name='input_ln')(x)
+
             if config.USE_LAYER_NORM:
                 # MLP with Layer Normalization
-                fc1_dense = Dense(512)(input)
+                fc1_dense = Dense(512)(x)
                 fc1_ln = LayerNormalization()(fc1_dense)
                 fc1 = Activation('relu')(fc1_ln)
                 
@@ -1218,7 +1228,7 @@ class A3CAgent:
                 fc2 = Activation('relu')(fc2_ln)
             else:
                 # MLP without normalization (original)
-                fc1 = Dense(512, activation='relu')(input)
+                fc1 = Dense(512, activation='relu')(x)
                 fc2 = Dense(512, activation='relu')(fc1)
             
             policy = Dense(self.action_size, activation='softmax')(fc2)
@@ -1226,7 +1236,7 @@ class A3CAgent:
             logger.info("Built Feed-Forward MLP models - Actor & Critic")
             logger.info("  Input shape: (None, 2000)")
             if config.USE_LAYER_NORM:
-                logger.info("  Layer Normalization: ENABLED")
+                logger.info("  Layer Normalization: ENABLED (Input + Hidden)")
 
         actor = Model(inputs=input, outputs=policy)
         critic = Model(inputs=input, outputs=value)
@@ -1241,6 +1251,8 @@ class A3CAgent:
             logger.info("  LSTM maintains state across episode steps for temporal learning")
 
         return actor, critic
+
+
 
 
 
@@ -2599,14 +2611,19 @@ class Agent(threading.Thread):
             input_shape = (1, 2000) # For MLP
 
         input_layer = Input(batch_shape=input_shape)
+        
+        x = input_layer
+        # Apply Layer Normalization directly on the input features if enabled
+        if config.USE_LAYER_NORM:
+            x = LayerNormalization(name='input_ln')(x)
 
         if config.USE_LSTM:
             if config.USE_LAYER_NORM:
-                fc1_dense = Dense(256)(input_layer)
+                fc1_dense = Dense(256)(x)
                 fc1_ln = LayerNormalization()(fc1_dense)
                 fc1 = Activation('relu')(fc1_ln)
             else:
-                fc1 = Dense(256, activation='relu')(input_layer)
+                fc1 = Dense(256, activation='relu')(x)
             
             lstm1 = LSTM(256, stateful=True, return_sequences=False)(fc1)
             policy_input = lstm1
@@ -2614,7 +2631,7 @@ class Agent(threading.Thread):
         else:
             if config.USE_LAYER_NORM:
                 # MLP with Layer Normalization
-                fc1_dense = Dense(512)(input_layer)
+                fc1_dense = Dense(512)(x)
                 fc1_ln = LayerNormalization()(fc1_dense)
                 fc1 = Activation('relu')(fc1_ln)
                 
@@ -2623,7 +2640,7 @@ class Agent(threading.Thread):
                 fc2 = Activation('relu')(fc2_ln)
             else:
                 # MLP without normalization (original)
-                fc1 = Dense(512, activation='relu')(input_layer)
+                fc1 = Dense(512, activation='relu')(x)
                 fc2 = Dense(512, activation='relu')(fc1)
             
             policy_input = fc2
