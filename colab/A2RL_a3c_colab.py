@@ -57,7 +57,7 @@ from skimage.transform import resize
 # Robust Keras/TensorFlow Compatibility Layer
 try:
     import tf_keras as keras
-    from tf_keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D, LayerNormalization, Activation
+    from tf_keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D, LayerNormalization, Activation, Lambda, Concatenate
     from tf_keras import backend as K
     from tf_keras.models import Model
     try:
@@ -68,7 +68,7 @@ try:
     if not config.IS_KAGGLE:  # Only print in non-Kaggle environments
         print("DEBUG: Using tf_keras (Legacy Keras)")
 except ImportError:
-    from tensorflow.keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D, LayerNormalization, Activation
+    from tensorflow.keras.layers import Dense, Flatten, Input, LSTM, Dropout, Conv2D, LayerNormalization, Activation, Lambda, Concatenate
     from tensorflow.keras import backend as K
     from tensorflow.keras.models import Model
     try:
@@ -1183,12 +1183,22 @@ class A3CAgent:
             # batch_size=1: Required for stateful LSTM (fixed batch size)
             # timesteps=1: Single observation per forward pass
             # features=2000: Global (1000) + Local (1000) features
-            input = Input(batch_shape=(1, 1, 2000))
+            input_layer = Input(batch_shape=(1, 1, 2000))
 
-            x = input
-            # Apply Layer Normalization directly on the input features if enabled
             if config.USE_LAYER_NORM:
-                x = LayerNormalization(name='input_ln')(x)
+                # Split 2000 features into Global (1000) and Local (1000)
+                # Input shape for LSTM: (1, 1, 2000)
+                global_f = Lambda(lambda x: x[:, :, :1000], name='split_global')(input_layer)
+                local_f = Lambda(lambda x: x[:, :, 1000:], name='split_local')(input_layer)
+
+                # Normalize separately
+                global_f_norm = LayerNormalization(name='global_ln')(global_f)
+                local_f_norm = LayerNormalization(name='local_ln')(local_f)
+
+                # Concatenate back
+                x = Concatenate(name='concat_features')([global_f_norm, local_f_norm])
+            else:
+                x = input_layer
 
             # Dense layer processes current observation
             if config.USE_LAYER_NORM:
@@ -1206,16 +1216,26 @@ class A3CAgent:
             logger.info("Built stateful LSTM models - Actor & Critic")
             logger.info("  Input shape: (1, 1, 2000) - batch_size=1, timesteps=1, features=2000")
             if config.USE_LAYER_NORM:
-                logger.info("  Layer Normalization: ENABLED (Input + Hidden)")
+                logger.info("  Layer Normalization: ENABLED (Split Input + Hidden)")
         else:
             # FEED-FORWARD ARCHITECTURE (MLP)
             # Standard input shape (None, 2000)
-            input = Input(shape=(2000,))
+            input_layer = Input(shape=(2000,))
             
-            x = input
-            # Apply Layer Normalization directly on the input features if enabled
             if config.USE_LAYER_NORM:
-                x = LayerNormalization(name='input_ln')(x)
+                # Split 2000 features into Global (1000) and Local (1000)
+                # Input shape for MLP: (None, 2000)
+                global_f = Lambda(lambda x: x[:, :1000], name='split_global')(input_layer)
+                local_f = Lambda(lambda x: x[:, 1000:], name='split_local')(input_layer)
+
+                # Normalize separately
+                global_f_norm = LayerNormalization(name='global_ln')(global_f)
+                local_f_norm = LayerNormalization(name='local_ln')(local_f)
+
+                # Concatenate back
+                x = Concatenate(name='concat_features')([global_f_norm, local_f_norm])
+            else:
+                x = input_layer
 
             if config.USE_LAYER_NORM:
                 # MLP with Layer Normalization
@@ -1236,10 +1256,10 @@ class A3CAgent:
             logger.info("Built Feed-Forward MLP models - Actor & Critic")
             logger.info("  Input shape: (None, 2000)")
             if config.USE_LAYER_NORM:
-                logger.info("  Layer Normalization: ENABLED (Input + Hidden)")
+                logger.info("  Layer Normalization: ENABLED (Split Input + Hidden)")
 
-        actor = Model(inputs=input, outputs=policy)
-        critic = Model(inputs=input, outputs=value)
+        actor = Model(inputs=input_layer, outputs=policy)
+        critic = Model(inputs=input_layer, outputs=value)
 
         # 가치와 정책을 예측하는 함수를 만들어냄
         if hasattr(actor, '_make_predict_function'):
@@ -2612,10 +2632,23 @@ class Agent(threading.Thread):
 
         input_layer = Input(batch_shape=input_shape)
         
-        x = input_layer
-        # Apply Layer Normalization directly on the input features if enabled
         if config.USE_LAYER_NORM:
-            x = LayerNormalization(name='input_ln')(x)
+            # Split 2000 features into Global (1000) and Local (1000)
+            if config.USE_LSTM:
+                global_f = Lambda(lambda x: x[:, :, :1000], name='split_global')(input_layer)
+                local_f = Lambda(lambda x: x[:, :, 1000:], name='split_local')(input_layer)
+            else:
+                global_f = Lambda(lambda x: x[:, :1000], name='split_global')(input_layer)
+                local_f = Lambda(lambda x: x[:, 1000:], name='split_local')(input_layer)
+
+            # Normalize separately
+            global_f_norm = LayerNormalization(name='global_ln')(global_f)
+            local_f_norm = LayerNormalization(name='local_ln')(local_f)
+
+            # Concatenate back
+            x = Concatenate(name='concat_features')([global_f_norm, local_f_norm])
+        else:
+            x = input_layer
 
         if config.USE_LSTM:
             if config.USE_LAYER_NORM:
