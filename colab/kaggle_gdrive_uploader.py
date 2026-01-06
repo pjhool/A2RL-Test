@@ -122,11 +122,150 @@ class KaggleGoogleDriveUploader:
                 if status:
                     logger.debug(f"  Upload progress: {int(status.progress() * 100)}%")
                     
-            logger.warning(f"✓ Upload complete: {os.path.basename(file_path)}")
+            logger.info(f"✓ Upload complete: {os.path.basename(file_path)}")
             return response.get('id')
             
         except Exception as e:
             logger.error(f"✗ GDrive upload error: {e}")
+            return None
+
+    def download_file(self, file_id, local_path):
+        """Download a file from GDrive by ID."""
+        try:
+            from googleapiclient.http import MediaIoBaseDownload
+            import io
+            
+            request = self.service.files().get_media(fileId=file_id)
+            fh = io.BytesIO()
+            downloader = MediaIoBaseDownload(fh, request)
+            
+            done = False
+            logger.info(f"Downloading file ID {file_id} to {local_path}...")
+            while done is False:
+                status, done = downloader.next_chunk()
+                # logger.debug(f"Download {int(status.progress() * 100)}%.")
+                
+            fh.seek(0)
+            with open(local_path, 'wb') as f:
+                f.write(fh.read())
+            logger.info(f"✓ Downloaded: {local_path}")
+            return True
+        except Exception as e:
+            logger.error(f"✗ Download failed: {e}")
+            return False
+
+    def download_latest_weights(self, drive_folder_name='save_model', local_dir='./downloaded_weights'):
+        """
+        Search for the latest model in 'drive_folder_name'.
+        Supports:
+          1. Subfolders named by date (conventional).
+          2. Tar archives (models_*.tar.gz) which contain the model folder.
+          
+        Downloads actor/critic/metadata to local_dir.
+        
+        Returns:
+            str: Path prefix for loading (e.g. './downloaded_weights/A2RL_actor_...'), or None
+        """
+        import tarfile
+        
+        try:
+            # 1. Find root folder ID
+            folder_id = self.find_or_create_folder(drive_folder_name)
+            if not folder_id:
+                logger.error(f"Folder '{drive_folder_name}' not found in Drive.")
+                return None
+            
+            # 2. Get Candidates (Folders and .tar.gz files)
+            query = f"'{folder_id}' in parents and (mimeType='application/vnd.google-apps.folder' or name contains '.tar.gz') and trashed=false"
+            results = self.service.files().list(
+                q=query, 
+                orderBy='modifiedTime desc', 
+                fields='files(id, name, mimeType, modifiedTime)'
+            ).execute()
+            candidates = results.get('files', [])
+            
+            if not candidates:
+                logger.warning(f"No models (folders or .tar.gz) found in '{drive_folder_name}'.")
+                return None
+            
+            # Sort by modifiedTime descending (API usually does it, but ensure it)
+            #candidates.sort(key=lambda x: x['modifiedTime'], reverse=True)
+            
+            latest_item = candidates[0]
+            logger.info(f"Latests candidate found: {latest_item['name']} ({latest_item['mimeType']})")
+            
+            final_prefix = None
+            
+            # --- CASE A: .tar.gz Archive ---
+            if 'tar.gz' in latest_item['name']:
+                logger.info("Detected compressed model archive.")
+                tar_path = os.path.join(local_dir, latest_item['name'])
+                
+                if not os.path.exists(local_dir):
+                    os.makedirs(local_dir)
+                    
+                if self.download_file(latest_item['id'], tar_path):
+                     # Extract
+                     logger.info(f"Extracting {tar_path}...")
+                     try:
+                         with tarfile.open(tar_path, "r:gz") as tar:
+                             tar.extractall(path=local_dir)
+                         logger.info("✓ Extraction complete.")
+                         
+                         # Search for actor file in the extracted content
+                         # The tar usually contains a folder, so we search recursively in local_dir
+                         import glob
+                         actor_files = glob.glob(os.path.join(local_dir, "**/*_actor.h5"), recursive=True)
+                         if actor_files:
+                             # Sort by modification time to get the "latest" inside the tar (if multiple)
+                             actor_files.sort(key=os.path.getmtime, reverse=True)
+                             latest_actor = actor_files[0]
+                             final_prefix = latest_actor.replace('_actor.h5', '')
+                             logger.info(f"Found extracted model: {os.path.basename(latest_actor)}")
+                         else:
+                             logger.error("No *_actor.h5 found in extracted archive.")
+                             
+                     except Exception as e:
+                         logger.error(f"Failed to extract tarball: {e}")
+            
+            # --- CASE B: Standard Folder ---
+            else:
+                logger.info("Detected standard model folder.")
+                d_id = latest_item['id']
+                
+                # Find *_actor.h5 files in this date folder
+                query_files = f"'{d_id}' in parents and name contains '_actor.h5' and trashed=false"
+                file_results = self.service.files().list(
+                    q=query_files, 
+                    orderBy='modifiedTime desc', 
+                    fields='files(id, name, modifiedTime)'
+                ).execute()
+                actor_files = file_results.get('files', [])
+                
+                if actor_files:
+                    latest_actor = actor_files[0]
+                    prefix = latest_actor['name'].replace('_actor.h5', '')
+                    
+                    if not os.path.exists(local_dir):
+                        os.makedirs(local_dir)
+                        
+                    local_actor_path = os.path.join(local_dir, latest_actor['name'])
+                    if self.download_file(latest_actor['id'], local_actor_path):
+                        # Attempt to download Critic and Metadata
+                        for suffix in ['_critic.h5', '_metadata.json']:
+                            target_name = f"{prefix}{suffix}"
+                            q_target = f"'{d_id}' in parents and name = '{target_name}' and trashed=false"
+                            res_t = self.service.files().list(q=q_target, fields='files(id, name)').execute()
+                            files_t = res_t.get('files', [])
+                            if files_t:
+                                self.download_file(files_t[0]['id'], os.path.join(local_dir, target_name))
+                                
+                        final_prefix = os.path.join(local_dir, prefix)
+            
+            return final_prefix
+
+        except Exception as e:
+            logger.error(f"✗ GDrive download error: {e}")
             return None
 
 

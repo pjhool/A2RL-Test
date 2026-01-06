@@ -2404,7 +2404,7 @@ class Agent(threading.Thread):
                 logger.warning("  Episodes Processed: %d", self.epoch_episode_count)
                 logger.warning("  Avg Initial Score:  %.4f", epoch_avg_init)
                 logger.warning("  Avg Final Score:    %.4f", epoch_avg_final)
-                logger.warning("  Avg Improvement:    %+.4f ({:+.2f}%)".format(epoch_improvement, epoch_imp_pct))
+                logger.warning("  Avg Improvement:    {:+.4f} ({:+.2f}%)".format(epoch_improvement, epoch_imp_pct))
                 logger.warning("  Avg Steps/Episode:  %.2f", epoch_avg_steps)
                 logger.warning("  Avg Max Prob/Ep:    %.4f", epoch_avg_p_max)
                 logger.warning("  Avg Loss/Update:    %.6f", epoch_avg_loss)
@@ -2721,10 +2721,35 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='A2RL Training')
     parser.add_argument('--resume', type=str, help='Path to model snapshot for resumption (including metadata, fold, epoch)')
     parser.add_argument('--load_weights', type=str, default=config.LOAD_WEIGHTS, help='Path to model weights to load as initial values (metadata ignored)')
+    parser.add_argument('--download_weights', action='store_true', help='Download latest weights from Google Drive ("save_model" folder)')
     parser.add_argument('--evaluate', type=str, help='Path to model snapshot for evaluation (excluding extensions)')
     parser.add_argument('--preprocess', action='store_true', help='Preprocess dataset (filter images by score)')
     parser.add_argument('--workers', type=int, help='Number of worker processes for preprocessing')
     args = parser.parse_args()
+
+    # Automatic download of weights from GDrive if requested
+    if args.download_weights or config.DOWNLOAD_WEIGHTS:
+        target_folder = config.DOWNLOAD_WEIGHTS if config.DOWNLOAD_WEIGHTS else 'save_model'
+        logger.info("Automatic GDrive download requested. Target Folder: %s", target_folder)
+        try:
+             # Just use the existing module logic
+             # We import here to avoid dependency if not needed
+             from kaggle_gdrive_uploader import KaggleGoogleDriveUploader
+             uploader = KaggleGoogleDriveUploader()
+             local_cache = '/content/latest_model_cache' if config.IS_COLAB else './latest_model_cache'
+             
+             downloaded_prefix = uploader.download_latest_weights(target_folder, local_cache)
+             
+             if downloaded_prefix:
+                 logger.info(f"Setting LOAD_WEIGHTS to downloaded model: {downloaded_prefix}")
+                 config.LOAD_WEIGHTS = downloaded_prefix
+                 # Also update args if necessary, though config is what matters for Agent init
+                 args.load_weights = downloaded_prefix
+             else:
+                 logger.error("Failed to download weights or none found.")
+        except Exception as e:
+            logger.error(f"Error during weight download: {e}")
+            logger.warning("Continuing without downloaded weights...")
 
     # 입력 이미지
     batch_size = 1

@@ -64,6 +64,7 @@ DISCOUNT_FACTOR = 0.99
 BETA = float(os.environ.get('A2RL_BETA', '0.15'))
 CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '0'))) # 1=True, Sort by score low to high
 LOAD_WEIGHTS = os.environ.get('A2RL_LOAD_WEIGHTS')
+DOWNLOAD_WEIGHTS = os.environ.get('A2RL_DOWNLOAD_WEIGHTS') # GDrive folder name to download weights from (e.g. 'save_model')
 ENABLE_GRAD_CLIP = bool(int(os.environ.get('A2RL_ENABLE_GRAD_CLIP', '0')))  # 1=True (default), 0=False
 GRAD_CLIP_NORM = float(os.environ.get('A2RL_GRAD_CLIP_NORM', '40.0'))
 GRAD_CLIP_DEBUG = bool(int(os.environ.get('A2RL_GRAD_CLIP_DEBUG', '0')))
