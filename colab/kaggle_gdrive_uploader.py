@@ -1,3 +1,49 @@
+"""
+Google Drive Uploader for Kaggle/Colab Training Results
+
+This module provides seamless Google Drive authentication and file upload capabilities
+for training runs in Kaggle and Google Colab environments.
+
+Authentication Methods (tried in order):
+1. Google Colab Secrets (google.colab.userdata) - Only works in interactive cells
+2. token.json file (default: /kaggle/input/secrets/token.json)
+3. Kaggle Secrets (GDRIVE_TOKEN)
+4. Environment Variable (A2RL_GDRIVE_TOKEN)
+
+Usage in Google Colab:
+----------------------
+⚠️ IMPORTANT: When running scripts via `!python script.py`, Colab Secrets are NOT directly
+accessible from the subprocess. You must pass the token via environment variable:
+
+```python
+import os
+from google.colab import userdata
+
+# Set environment variable before running the script
+os.environ['A2RL_GDRIVE_TOKEN'] = userdata.get('GDRIVE_TOKEN')
+
+# Now run your script
+!python colab/A2RL_a3c_colab.py --download_weights
+```
+
+Setting up GDRIVE_TOKEN in Colab:
+1. Click the 🔑 (Secrets) icon in the Colab sidebar
+2. Add a new secret with Name: GDRIVE_TOKEN
+3. Paste your JSON token content as the Value
+4. Enable "Notebook access" toggle
+
+Token Format:
+The token should be a JSON string containing OAuth2 credentials:
+{
+  "token": "...",
+  "refresh_token": "...",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "client_id": "...",
+  "client_secret": "...",
+  "scopes": ["https://www.googleapis.com/auth/drive.file"]
+}
+"""
+
 import os
 import json
 import logging
@@ -13,7 +59,6 @@ try:
     HAS_GDRIVE_LIBS = True
 except ImportError:
     HAS_GDRIVE_LIBS = False
-
 
 class KaggleGoogleDriveUploader:
     """Integrated Google Drive Uploader for Kaggle"""
@@ -40,28 +85,28 @@ class KaggleGoogleDriveUploader:
         try:
             token_data = None
             
-            # 1. Try Google Colab User Data (New!)
-            try:
-                import sys
-                # Only attempt if we are in an interactive IPython environment (not a subprocess)
-                if 'google.colab' in sys.modules or os.path.exists('/content'):
-                    from google.colab import userdata
-                    try:
-                        # Check if we have an IPython kernel
+            # 1. Try Google Colab User Data (Only works in interactive notebook cells)
+            if not token_data:
+                try:
+                    import sys
+                    # Check if we're in a Colab environment
+                    if 'google.colab' in sys.modules or os.path.exists('/content'):
+                        # Check if we have an interactive IPython kernel
                         import IPython
                         if IPython.get_ipython() is not None:
+                            # We're in an interactive cell, can access userdata
+                            from google.colab import userdata
                             secret_json = userdata.get('GDRIVE_TOKEN')
                             if secret_json:
                                 logger.warning("✓ Found GDRIVE_TOKEN in Colab Secrets")
                                 token_data = json.loads(secret_json)
                                 logger.warning("✓ Successfully parsed GDrive token JSON")
                         else:
-                            logger.debug("  - Not in an interactive cell context. skipping Colab userdata.")
-                    except Exception as e:
-                        logger.debug("  - Colab userdata.get failed: %s", e)
-            except ImportError:
-                # Not in Colab environment
-                pass
+                            # We're in a subprocess (e.g., !python script.py)
+                            logger.debug("  - Running in subprocess. Use A2RL_GDRIVE_TOKEN env var instead.")
+                except (ImportError, AttributeError, Exception) as e:
+                    # Silently skip if any part fails (not in Colab, no IPython, etc.)
+                    logger.debug("  - Colab userdata access failed: %s", e)
 
             # 2. Try token.json file
             if not token_data and os.path.exists(self.token_path):
@@ -86,13 +131,21 @@ class KaggleGoogleDriveUploader:
                     pass
             
             # 4. Try Environment Variable (A2RL_GDRIVE_TOKEN)
-            if not token_data and "A2RL_GDRIVE_TOKEN" in os.environ:
-                logger.warning("✓ Using GDrive token from environment variable (A2RL_GDRIVE_TOKEN)")
-                token_data = json.loads(os.environ["A2RL_GDRIVE_TOKEN"])
+            if not token_data:
+                if "A2RL_GDRIVE_TOKEN" in os.environ:
+                    logger.warning("✓ Found A2RL_GDRIVE_TOKEN in environment variables")
+                    try:
+                        token_data = json.loads(os.environ["A2RL_GDRIVE_TOKEN"])
+                        logger.warning("✓ Successfully parsed environment token JSON")
+                    except Exception as e:
+                        logger.error("  - Failed to parse A2RL_GDRIVE_TOKEN as JSON: %s", e)
+                else:
+                    logger.debug("  - A2RL_GDRIVE_TOKEN not found in environment")
                 
             if not token_data:
                 logger.error("✗ No Google Drive authentication found.")
                 logger.warning("Cloud backup will be disabled. To enable, provide 'GDRIVE_TOKEN' in Colab/Kaggle Secrets.")
+                logger.warning("Or set environment variable 'A2RL_GDRIVE_TOKEN' before running the script.")
                 self.service = None
                 return
                 
