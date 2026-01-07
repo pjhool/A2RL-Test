@@ -444,16 +444,24 @@ def load_and_validate_image(filepath):
         # Read image
         import contextlib
         import io as python_io
-        try:
-            with contextlib.redirect_stderr(python_io.StringIO()):
-                img = io.imread(filepath)
-        except Exception as e:
-            # Fallback for formats not recognized by skimage (e.g. some JPG variants)
-            logger.debug("skimage failed to load %s, trying cv2: %s", os.path.basename(filepath), e)
-            img_bgr = cv2.imread(filepath)
-            if img_bgr is not None:
-                img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            else:
+        
+        # Try OpenCV first as it's often faster and quieter for standard image formats
+        img_bgr = cv2.imread(filepath)
+        if img_bgr is not None:
+            img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        else:
+            # Fallback to skimage but suppress the low-level noise (GDAL etc.)
+            try:
+                # Attempt to redirect at the OS level (file descriptor 2)
+                # Note: This is more robust than sys.stderr redirection for C-level output
+                with open(os.devnull, 'w') as fnull:
+                    with contextlib.redirect_stderr(fnull):
+                        # Some libraries write directly to fd 2
+                        # We try to use a more persistent suppression if needed, 
+                        # but let's try standard redirect_stderr with skimage first
+                        img = io.imread(filepath)
+            except Exception as e:
+                logger.debug("Both cv2 and skimage failed for %s: %s", os.path.basename(filepath), e)
                 return None, "Format not recognized by skimage or cv2"
         
         # Check dimensions
