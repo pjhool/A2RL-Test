@@ -435,14 +435,23 @@ def load_and_validate_image(filepath):
         
         # Check file size
         try:
-            file_size = getsize(filepath)
+            file_size = os.path.getsize(filepath)
             if file_size < config.MIN_FILE_SIZE:
                 return None, "File too small ({} bytes)".format(file_size)
         except Exception as e:
             return None, "Cannot get file size: {}".format(e)
         
         # Read image
-        img = io.imread(filepath)
+        try:
+            img = io.imread(filepath)
+        except Exception as e:
+            # Fallback for formats not recognized by skimage (e.g. some JPG variants)
+            logger.debug("skimage failed to load %s, trying cv2: %s", os.path.basename(filepath), e)
+            img_bgr = cv2.imread(filepath)
+            if img_bgr is not None:
+                img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            else:
+                return None, "Format not recognized by skimage or cv2"
         
         # Check dimensions
         if img.ndim != 3:

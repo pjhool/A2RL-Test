@@ -31,18 +31,36 @@ class KaggleGoogleDriveUploader:
     
     def authenticate(self):
         """
-        Authenticate using token.json, Kaggle Secrets, or environment variables.
+        Authenticate using:
+        1. Google Colab User Data (google.colab.userdata)
+        2. token.json file
+        3. Kaggle Secrets
+        4. Environment Variable
         """
         try:
             token_data = None
             
-            # 1. Try token.json file
-            if os.path.exists(self.token_path):
+            # 1. Try Google Colab User Data (New!)
+            try:
+                from google.colab import userdata
+                secret_json = userdata.get('GDRIVE_TOKEN')
+                if secret_json:
+                    logger.warning("✓ Using GDrive token from Colab Secrets (GDRIVE_TOKEN)")
+                    token_data = json.loads(secret_json)
+            except (ImportError, Exception):
+                # google.colab not available or secret not set
+                pass
+
+            # 2. Try token.json file
+            if not token_data and os.path.exists(self.token_path):
                 logger.warning(f"✓ Using GDrive token from file: {self.token_path}")
-                with open(self.token_path) as f:
-                    token_data = json.load(f)
+                try:
+                    with open(self.token_path) as f:
+                        token_data = json.load(f)
+                except Exception as e:
+                    logger.error(f"  - Error reading {self.token_path}: {e}")
             
-            # 2. Try Kaggle Secrets (UserSecretsClient)
+            # 3. Try Kaggle Secrets (UserSecretsClient)
             if not token_data:
                 try:
                     from kaggle_secrets import UserSecretsClient
@@ -55,21 +73,16 @@ class KaggleGoogleDriveUploader:
                     # kaggle_secrets not available or secret not set
                     pass
             
-            # 3. Try Environment Variable (A2RL_GDRIVE_TOKEN)
+            # 4. Try Environment Variable (A2RL_GDRIVE_TOKEN)
             if not token_data and "A2RL_GDRIVE_TOKEN" in os.environ:
                 logger.warning("✓ Using GDrive token from environment variable (A2RL_GDRIVE_TOKEN)")
                 token_data = json.loads(os.environ["A2RL_GDRIVE_TOKEN"])
                 
             if not token_data:
-                err_msg = (
-                    "✗ No Google Drive authentication found.\n"
-                    "Please provide one of the following:\n"
-                    f"1. A file at {self.token_path}\n"
-                    "2. A Kaggle Secret named 'GDRIVE_TOKEN' (JSON string)\n"
-                    "3. An environment variable 'A2RL_GDRIVE_TOKEN' (JSON string)"
-                )
-                logger.error(err_msg)
-                raise FileNotFoundError("Google Drive authentication credentials not found")
+                logger.error("✗ No Google Drive authentication found.")
+                logger.warning("Cloud backup will be disabled. To enable, provide 'GDRIVE_TOKEN' in Colab/Kaggle Secrets.")
+                self.service = None
+                return
                 
             creds = Credentials.from_authorized_user_info(token_data)
             self.service = build('drive', 'v3', credentials=creds)
@@ -77,10 +90,13 @@ class KaggleGoogleDriveUploader:
             
         except Exception as e:
             logger.error(f"✗ Google Drive authentication failed: {e}")
-            raise
+            self.service = None
 
     def find_or_create_folder(self, folder_name):
         """Locate an existing folder by name or create a new one."""
+        if not self.service:
+            logger.error("✗ GDrive service not initialized. Skipping operation.")
+            return None
         try:
             query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
             results = self.service.files().list(q=query, spaces='drive', fields='files(id)', pageSize=1).execute()
@@ -99,6 +115,9 @@ class KaggleGoogleDriveUploader:
 
     def upload_file(self, file_path, folder_name='A2RL_Results'):
         """Upload a file to a specific GDrive folder."""
+        if not self.service:
+            logger.error("✗ GDrive service not initialized. Skipping upload.")
+            return None
         try:
             if not file_path or not os.path.exists(file_path):
                 logger.warning(f"⚠️ Skipping upload: File not found ({file_path})")
@@ -131,6 +150,9 @@ class KaggleGoogleDriveUploader:
 
     def download_file(self, file_id, local_path):
         """Download a file from GDrive by ID."""
+        if not self.service:
+            logger.error("✗ GDrive service not initialized. Skipping download.")
+            return False
         try:
             from googleapiclient.http import MediaIoBaseDownload
             import io
@@ -157,15 +179,12 @@ class KaggleGoogleDriveUploader:
     def download_latest_weights(self, drive_folder_name='save_model', local_dir='./downloaded_weights'):
         """
         Search for the latest model in 'drive_folder_name'.
-        Supports:
-          1. Subfolders named by date (conventional).
-          2. Tar archives (models_*.tar.gz) which contain the model folder.
-          
-        Downloads actor/critic/metadata to local_dir.
-        
-        Returns:
-            str: Path prefix for loading (e.g. './downloaded_weights/A2RL_actor_...'), or None
+        ...
         """
+        if not self.service:
+            logger.error("✗ GDrive service not initialized. Skipping weight download.")
+            return None
+            
         import tarfile
         
         try:
