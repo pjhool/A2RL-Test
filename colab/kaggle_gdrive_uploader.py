@@ -43,12 +43,16 @@ class KaggleGoogleDriveUploader:
             # 1. Try Google Colab User Data (New!)
             try:
                 from google.colab import userdata
-                secret_json = userdata.get('GDRIVE_TOKEN')
-                if secret_json:
-                    logger.warning("✓ Using GDrive token from Colab Secrets (GDRIVE_TOKEN)")
-                    token_data = json.loads(secret_json)
-            except (ImportError, Exception):
-                # google.colab not available or secret not set
+                try:
+                    secret_json = userdata.get('GDRIVE_TOKEN')
+                    if secret_json:
+                        logger.warning("✓ Found GDRIVE_TOKEN in Colab Secrets")
+                        token_data = json.loads(secret_json)
+                        logger.warning("✓ Successfully parsed GDrive token JSON")
+                except Exception as e:
+                    logger.error("  - Colab userdata.get failed or invalid JSON: %s", e)
+            except ImportError:
+                # Not in Colab environment
                 pass
 
             # 2. Try token.json file
