@@ -17,9 +17,9 @@ IS_KAGGLE = 'KAGGLE_KERNEL_RUN_TYPE' in os.environ
 if IS_COLAB:
     print("Config: Detected Google Colab Environment")
     # Assuming Google Drive is mounted at /content/drive
-    DRIVE_ROOT = '/content/drive/MyDrive/A2RL/A2RL-Test'
-    DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', '/content/drive/MyDrive/A2RL/data')
-    EVAL_DATA_ROOT = os.environ.get('A2RL_EVAL_DATA_ROOT', '/content/drive/MyDrive/A2RL/data')
+    DRIVE_ROOT = '/content/A2RL-Test'
+    DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', '/content/data')
+    EVAL_DATA_ROOT = os.environ.get('A2RL_EVAL_DATA_ROOT', '/content/data/eval')
     LOG_SUMMARY_ROOT = '/content'  # Local VM disk for speed, sync later
     
 elif IS_KAGGLE:
@@ -61,7 +61,7 @@ ACTOR_LR = float(os.environ.get('A2RL_ACTOR_LR', '1.5e-5'))
 CRITIC_LR = float(os.environ.get('A2RL_CRITIC_LR', '1.5e-5'))
 DISCOUNT_FACTOR = 0.99
 #BETA = 0.1
-BETA = float(os.environ.get('A2RL_BETA', '0.15'))
+BETA = float(os.environ.get('A2RL_BETA', '0.05'))
 CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '0'))) # 1=True, Sort by score low to high
 LOAD_WEIGHTS = os.environ.get('A2RL_LOAD_WEIGHTS')
 DOWNLOAD_WEIGHTS = os.environ.get('A2RL_DOWNLOAD_WEIGHTS') # GDrive folder name to download weights from (e.g. 'save_model')
