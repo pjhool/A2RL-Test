@@ -136,8 +136,8 @@ FEATURE_STATS_PATH = DRIVE_ROOT + '/feature_stats.json'
 FEATURE_EPSILON = 1e-8
 
 # --- Mini-Batch Training Settings ---
-ENABLE_MINI_BATCH = True
-MINI_BATCH_SIZE = 8 # Accumulate gradients over 8 updates for faster iteration
+ENABLE_MINI_BATCH = bool(int(os.environ.get('A2RL_ENABLE_MINI_BATCH', '1')))
+MINI_BATCH_SIZE = int(os.environ.get('A2RL_MINI_BATCH_SIZE', '8')) # Accumulate gradients over 8 episodes for MLP
 
 # --- Model Save Settings ( Interval in minutes )---
 SAVE_INTERVAL_MINUTES = 20

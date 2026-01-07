@@ -1638,6 +1638,10 @@ class Agent(threading.Thread):
         self.epoch_update_count = 0
         self.epoch_improved_count = 0
         self.epoch_decreased_count = 0
+        
+        # Mini-batch buffers for MLP training
+        self.mb_states, self.mb_actions, self.mb_advantages, self.mb_discounted_predictions = [], [], [], []
+        self.mb_episode_count = 0
 
         # Feature scaling setup
         self.enable_feature_scaling = config.ENABLE_FEATURE_SCALING
@@ -2533,14 +2537,65 @@ class Agent(threading.Thread):
 
         advantages = discounted_prediction - values
 
-        # SEQUENTIAL TRAINING
-        # We must update the model step-by-step to maintain proper LSTM state flow.
-        try:
-            with a3c_graph.as_default():
-                with self.sess.as_default():
-                    if config.USE_LSTM:
-                        # SEQUENTIAL TRAINING for Stateful LSTM
-                        # We must update the model step-by-step to maintain proper LSTM state flow.
+        # BATCH TRAINING for MLP
+        if not config.USE_LSTM:
+            if config.ENABLE_MINI_BATCH:
+                # Accumulate data for mini-batch update
+                self.mb_states.extend(states)
+                self.mb_actions.extend(self.actions)
+                self.mb_advantages.extend(advantages)
+                self.mb_discounted_predictions.extend(discounted_prediction)
+                self.mb_episode_count += 1
+                
+                # Clear episode buffers
+                self.states, self.actions, self.rewards = [], [], []
+                
+                # Check if we should perform the update
+                if self.mb_episode_count < config.MINI_BATCH_SIZE:
+                    logger.debug('Mini-batch: Accumulating episodes (%d/%d)', 
+                                self.mb_episode_count, config.MINI_BATCH_SIZE)
+                    return
+                
+                logger.info('Mini-batch: Update triggered (%d episodes accumulated)', self.mb_episode_count)
+                s_batch = np.vstack(self.mb_states)
+                a_batch = np.vstack(self.mb_actions)
+                adv_batch = np.array(self.mb_advantages).reshape(-1, 1)
+                target_batch = np.array(self.mb_discounted_predictions).reshape(-1, 1)
+                
+                # Clear mini-batch buffers after preparing batch
+                self.mb_states, self.mb_actions, self.mb_advantages, self.mb_discounted_predictions = [], [], [], []
+                self.mb_episode_count = 0
+            else:
+                # Process the entire episode as a single mini-batch (Original behavior)
+                s_batch = np.vstack(states)
+                a_batch = np.vstack(self.actions)
+                adv_batch = advantages.reshape(-1, 1)
+                target_batch = discounted_prediction.reshape(-1, 1)
+                self.states, self.actions, self.rewards = [], [], []
+
+            try:
+                with a3c_graph.as_default():
+                    with self.sess.as_default():
+                        l_actor = self.optimizer[0]([s_batch, a_batch, adv_batch])[0]
+                        l_critic = self.optimizer[1]([s_batch, target_batch])[0]
+                        
+                        batch_loss = (l_actor + l_critic)
+                        steps = len(s_batch)
+                        self.avg_loss += batch_loss * steps
+                        
+                        with episode_lock:
+                            total_updates += steps
+                        self.epoch_update_count += steps
+                        
+            except Exception as e:
+                logger.error("Error during MLP batch training: {}".format(str(e)))
+                raise e
+        else:
+            # SEQUENTIAL TRAINING for Stateful LSTM
+            # We must update the model step-by-step to maintain proper LSTM state flow.
+            try:
+                with a3c_graph.as_default():
+                    with self.sess.as_default():
                         # CRITICAL: Reset states before backprop sequence
                         self.local_actor.reset_states()
                         self.local_critic.reset_states()
@@ -2559,35 +2614,12 @@ class Agent(threading.Thread):
                             with episode_lock:
                                 total_updates += 1
                             self.epoch_update_count += 1
-                    else:
-                        # BATCH TRAINING for MLP
-                        # Process the entire episode as a single mini-batch for efficiency
-                        s_batch = np.vstack(states)
-                        a_batch = np.vstack(self.actions)
-                        adv_batch = advantages.reshape(-1, 1)
-                        target_batch = discounted_prediction.reshape(-1, 1)
-                        
-                        l_actor = self.optimizer[0]([s_batch, a_batch, adv_batch])[0]
-                        l_critic = self.optimizer[1]([s_batch, target_batch])[0]
-                        
-                        # Loss is already averaged/summed in optimizer, but avg_loss tracks per-step roughly
-                        # For consistency, we divide by steps
-                        steps = len(states)
-                        batch_loss = (l_actor + l_critic)
-                        self.avg_loss += batch_loss * steps # avg_loss is conventionally cumulative sum per episode
-                        
-                        with episode_lock:
-                            total_updates += steps # or 1 update? usually updates counts gradient applications.
-                            # But legacy used steps. Let's keep it 'steps' so total_updates reflects steps trained
-                            total_updates += steps 
-                        self.epoch_update_count += steps
-            
-        except Exception as e:
-            logger.error("Error during sequential training: {}".format(str(e)))
-            raise e
-
-        # Clear buffers
-        self.states, self.actions, self.rewards = [], [], []
+                
+                # Clear buffers after sequential training
+                self.states, self.actions, self.rewards = [], [], []
+            except Exception as e:
+                logger.error("Error during sequential training: {}".format(str(e)))
+                raise e
 
         # Reset LSTM states after episode completion
         if done and config.USE_LSTM: # Only reset if LSTM is used
