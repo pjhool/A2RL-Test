@@ -442,8 +442,11 @@ def load_and_validate_image(filepath):
             return None, "Cannot get file size: {}".format(e)
         
         # Read image
+        import contextlib
+        import io as python_io
         try:
-            img = io.imread(filepath)
+            with contextlib.redirect_stderr(python_io.StringIO()):
+                img = io.imread(filepath)
         except Exception as e:
             # Fallback for formats not recognized by skimage (e.g. some JPG variants)
             logger.debug("skimage failed to load %s, trying cv2: %s", os.path.basename(filepath), e)
