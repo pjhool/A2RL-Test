@@ -21,12 +21,12 @@ if config.IS_KAGGLE:
     
     # Suppress Python warnings
     import warnings
-    warnings.filterwarnings('ignore', category=DeprecationWarning)
-    warnings.filterwarnings('ignore', category=UserWarning)
-    warnings.filterwarnings('ignore', category=FutureWarning)
-    warnings.filterwarnings('ignore', message='.*set_learning_phase.*')
-    warnings.filterwarnings('ignore', message='.*state_updates.*')
     warnings.filterwarnings('ignore', message='.*Conversion of an array.*')
+    
+    # Silence GDAL/skimage low-level errors (the infamous ERROR 4)
+    os.environ['GDAL_QUIET'] = 'ON'
+    os.environ['CPL_LOG'] = '/dev/null'
+    os.environ['CPL_LOG_ERRORS'] = 'OFF'
 else:
     # Print debug info only in non-Kaggle environments
     print("DEBUG: VERSION 20251226_03 - Using manual set_learning_phase check")
@@ -452,14 +452,21 @@ def load_and_validate_image(filepath):
         else:
             # Fallback to skimage but suppress the low-level noise (GDAL etc.)
             try:
-                # Attempt to redirect at the OS level (file descriptor 2)
-                # Note: This is more robust than sys.stderr redirection for C-level output
+                # To suppress low-level C output (to fd 2/stderr), we must use os.dup2
+                # This is more robust than sys.stderr redirection
                 with open(os.devnull, 'w') as fnull:
-                    with contextlib.redirect_stderr(fnull):
-                        # Some libraries write directly to fd 2
-                        # We try to use a more persistent suppression if needed, 
-                        # but let's try standard redirect_stderr with skimage first
+                    fnull_fd = fnull.fileno()
+                    # Save original stderr
+                    stderr_fd = 2
+                    old_stderr_fd = os.dup(stderr_fd)
+                    try:
+                        # Redirect stderr to /dev/null
+                        os.dup2(fnull_fd, stderr_fd)
                         img = io.imread(filepath)
+                    finally:
+                        # Restore original stderr
+                        os.dup2(old_stderr_fd, stderr_fd)
+                        os.close(old_stderr_fd)
             except Exception as e:
                 logger.debug("Both cv2 and skimage failed for %s: %s", os.path.basename(filepath), e)
                 return None, "Format not recognized by skimage or cv2"
@@ -566,9 +573,11 @@ def _preprocess_worker(args):
     filepath = os.path.join(source_path, filename)
     
     try:
-        # Load image
-        img = io.imread(filepath)
-        
+        # Load image via robust loader
+        img, error = load_and_validate_image(filepath)
+        if error:
+            return filename, None, False, None
+            
         # 1. Format & Channel Check
         if img.ndim != 3 or img.shape[2] != 3:
             return filename, None, False, None
