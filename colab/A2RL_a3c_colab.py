@@ -3049,7 +3049,7 @@ if __name__ == "__main__":
             all_files = [f for f in all_files if any(f.lower().endswith(ext) for ext in config.VALID_IMAGE_EXTENSIONS)]
             #random.shuffle(all_files)
             logger.info('all_files len: %d', len(all_files))
-            test_files = all_files[:30]
+            test_files = all_files[:-1]
             global_agent.evaluate(test_files)
         except Exception as e:
             logger.error('Evaluation failed: %s', e)
