@@ -17,7 +17,7 @@ IS_KAGGLE = 'KAGGLE_KERNEL_RUN_TYPE' in os.environ
 if IS_COLAB:
     print("Config: Detected Google Colab Environment")
     # Assuming Google Drive is mounted at /content/drive
-    DRIVE_ROOT = '/content/A2RL-Test'
+    DRIVE_ROOT = '/content/drive/MyDrive/A2RL/A2RL-Test'
     DATA_ROOT = os.environ.get('A2RL_DATA_ROOT', '/content/data')
     EVAL_DATA_ROOT = os.environ.get('A2RL_EVAL_DATA_ROOT', '/content/data/eval')
     LOG_SUMMARY_ROOT = '/content'  # Local VM disk for speed, sync later
