@@ -82,6 +82,13 @@ class KaggleGoogleDriveUploader:
         3. Kaggle Secrets
         4. Environment Variable
         """
+        # Check if Google Drive libraries are available
+        if not HAS_GDRIVE_LIBS:
+            logger.error("✗ Google Drive libraries not installed.")
+            logger.error("TIP: Run 'pip install google-api-python-client google-auth-oauthlib'")
+            self.service = None
+            return
+            
         try:
             token_data = None
             
