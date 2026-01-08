@@ -76,7 +76,7 @@ THREADS = int(os.environ.get('A2RL_THREADS', '8'))  # Colab usually gives 2 core
 T_MAX = int(os.environ.get('A2RL_T_MAX', '50'))          # Maximum steps per episode
 UPDATE_FREQ = 10    # Model update frequency (t_max)
 STEP_PENALTY = float(os.environ.get('A2RL_STEP_PENALTY', '0.005'))
-MIN_STEPS = int(os.environ.get('A2RL_MIN_STEPS', '10'))      # Encourage at least 10 steps before STOP
+MIN_STEPS = int(os.environ.get('A2RL_MIN_STEPS', '4'))      # Encourage at least 10 steps before STOP
 STOP_REWARD = float(os.environ.get('A2RL_STOP_REWARD', '-1.0')) # Penalty for early STOP
 
 REWARD_SCALE = float(os.environ.get('A2RL_REWARD_SCALE', '10.0'))
@@ -88,7 +88,7 @@ TRAIN_SIZE = 100
 NUM_BATCHES = TRAIN_SIZE // BATCH_SIZE
 
 EPOCH_SIZE = int(os.environ.get('A2RL_EPOCH_SIZE', '200'))
-MAX_EPISODES = int(os.environ.get('A2RL_MAX_EPISODES', '20000'))
+MAX_EPISODES = int(os.environ.get('A2RL_MAX_EPISODES', '400000'))
 MAX_TRAIN_HOURS = float(os.environ.get('A2RL_MAX_TRAIN_HOURS', '0')) # 0 means no limit
 
 # preprocess parameters
