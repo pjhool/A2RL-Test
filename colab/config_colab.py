@@ -70,8 +70,8 @@ GRAD_CLIP_NORM = float(os.environ.get('A2RL_GRAD_CLIP_NORM', '40.0'))
 GRAD_CLIP_DEBUG = bool(int(os.environ.get('A2RL_GRAD_CLIP_DEBUG', '0')))
 
 # Environment variable support for runtime configuration
-THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Colab usually gives 2 cores
-
+THREADS = int(os.environ.get('A2RL_THREADS', '8'))  # Colab usually gives 2 cores
+#THREADS = int(os.environ.get('A2RL_THREADS', '8'))
 # --- RL Agent Parameters ---
 T_MAX = int(os.environ.get('A2RL_T_MAX', '50'))          # Maximum steps per episode
 UPDATE_FREQ = 10    # Model update frequency (t_max)
@@ -127,7 +127,7 @@ POOLING = 'max'
 ACTION_SIZE = 14
 # Network Architecture Selection
 USE_LSTM = bool(int(os.environ.get('A2RL_USE_LSTM', '0')))  # 0=False(MLP), 1=True(LSTM)
-USE_LAYER_NORM = bool(int(os.environ.get('A2RL_USE_LAYER_NORM', '0')))  # 0=False (default), 1=True
+USE_LAYER_NORM = bool(int(os.environ.get('A2RL_USE_LAYER_NORM', '1')))  # 0=False (default), 1=True
 
 # --- Feature Scaling Settings ---
 ENABLE_FEATURE_SCALING = True
