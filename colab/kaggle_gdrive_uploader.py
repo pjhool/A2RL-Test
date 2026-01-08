@@ -108,14 +108,30 @@ class KaggleGoogleDriveUploader:
                     # Silently skip if any part fails (not in Colab, no IPython, etc.)
                     logger.debug("  - Colab userdata access failed: %s", e)
 
-            # 2. Try token.json file
-            if not token_data and os.path.exists(self.token_path):
-                logger.warning(f"✓ Using GDrive token from file: {self.token_path}")
-                try:
-                    with open(self.token_path) as f:
-                        token_data = json.load(f)
-                except Exception as e:
-                    logger.error(f"  - Error reading {self.token_path}: {e}")
+            # 2. Try token.json file (check multiple locations)
+            if not token_data:
+                # Search locations in priority order
+                token_search_paths = [
+                    self.token_path,  # User-specified path
+                    os.path.join(os.getcwd(), 'token.json'),  # Current working directory
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'token.json'),  # Script directory
+                    os.path.join(os.getcwd(), 'auth', 'token.json'),  # ./auth/token.json
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'auth', 'token.json'),  # ../auth/token.json
+                ]
+                
+                for token_path in token_search_paths:
+                    if os.path.exists(token_path):
+                        logger.warning(f"✓ Using GDrive token from file: {token_path}")
+                        try:
+                            with open(token_path) as f:
+                                token_data = json.load(f)
+                            break  # Successfully loaded, stop searching
+                        except Exception as e:
+                            logger.error(f"  - Error reading {token_path}: {e}")
+                            continue  # Try next location
+                
+                if not token_data:
+                    logger.debug(f"  - No token.json found in standard locations")
             
             # 3. Try Kaggle Secrets (UserSecretsClient)
             if not token_data:
