@@ -57,29 +57,29 @@ LOG_DIR = os.path.join(LOG_SUMMARY_ROOT, 'logs', date_str)
 ALEXNET_NPY = os.path.join(DRIVE_ROOT, 'alexnet.npy')
 
 # --- A3C Hyperparameters ---
-ACTOR_LR = float(os.environ.get('A2RL_ACTOR_LR', '1.5e-5'))
-CRITIC_LR = float(os.environ.get('A2RL_CRITIC_LR', '1.5e-5'))
+ACTOR_LR = float(os.environ.get('A2RL_ACTOR_LR', '1.0e-5'))
+CRITIC_LR = float(os.environ.get('A2RL_CRITIC_LR', '2.0e-5'))
 DISCOUNT_FACTOR = 0.99
 #BETA = 0.1
 BETA = float(os.environ.get('A2RL_BETA', '0.05'))
 CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '0'))) # 1=True, Sort by score low to high
 LOAD_WEIGHTS = os.environ.get('A2RL_LOAD_WEIGHTS')
 DOWNLOAD_WEIGHTS = os.environ.get('A2RL_DOWNLOAD_WEIGHTS') # GDrive folder name to download weights from (e.g. 'save_model')
-ENABLE_GRAD_CLIP = bool(int(os.environ.get('A2RL_ENABLE_GRAD_CLIP', '0')))  # 1=True (default), 0=False
-GRAD_CLIP_NORM = float(os.environ.get('A2RL_GRAD_CLIP_NORM', '40.0'))
+ENABLE_GRAD_CLIP = bool(int(os.environ.get('A2RL_ENABLE_GRAD_CLIP', '1')))  # Enable for stability
+GRAD_CLIP_NORM = float(os.environ.get('A2RL_GRAD_CLIP_NORM', '10.0'))  # Stable recovery norm
 GRAD_CLIP_DEBUG = bool(int(os.environ.get('A2RL_GRAD_CLIP_DEBUG', '0')))
 
 # Environment variable support for runtime configuration
-THREADS = int(os.environ.get('A2RL_THREADS', '8'))  # Colab usually gives 2 cores
-#THREADS = int(os.environ.get('A2RL_THREADS', '8'))
+THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Reduced to 2 for maximum stability during recovery
+#THREADS = int(os.environ.get('A2RL_THREADS', '4'))
 # --- RL Agent Parameters ---
 T_MAX = int(os.environ.get('A2RL_T_MAX', '50'))          # Maximum steps per episode
 UPDATE_FREQ = 10    # Model update frequency (t_max)
 STEP_PENALTY = float(os.environ.get('A2RL_STEP_PENALTY', '0.005'))
-MIN_STEPS = int(os.environ.get('A2RL_MIN_STEPS', '4'))      # Encourage at least 10 steps before STOP
+MIN_STEPS = int(os.environ.get('A2RL_MIN_STEPS', '10'))      # Encourage at least 10 steps before STOP (reverted from 4)
 STOP_REWARD = float(os.environ.get('A2RL_STOP_REWARD', '-1.0')) # Penalty for early STOP
 
-REWARD_SCALE = float(os.environ.get('A2RL_REWARD_SCALE', '10.0'))
+REWARD_SCALE = float(os.environ.get('A2RL_REWARD_SCALE', '5.0'))
 REWARD_CLIP_MIN = float(os.environ.get('A2RL_REWARD_CLIP_MIN', '-1.0'))
 REWARD_CLIP_MAX = float(os.environ.get('A2RL_REWARD_CLIP_MAX', '1.0'))
 
@@ -137,7 +137,7 @@ FEATURE_EPSILON = 1e-8
 
 # --- Mini-Batch Training Settings ---
 ENABLE_MINI_BATCH = bool(int(os.environ.get('A2RL_ENABLE_MINI_BATCH', '1')))
-MINI_BATCH_SIZE = int(os.environ.get('A2RL_MINI_BATCH_SIZE', '8')) # Accumulate gradients over 8 episodes for MLP
+MINI_BATCH_SIZE = int(os.environ.get('A2RL_MINI_BATCH_SIZE', '16')) # Balanced speed and stale gradient risk
 
 # --- Model Save Settings ( Interval in minutes )---
 SAVE_INTERVAL_MINUTES = 20
