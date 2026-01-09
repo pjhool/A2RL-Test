@@ -100,14 +100,11 @@ import random
 import time
 import json
 
-# --- Google Drive Uploader Integration (Kaggle/Colab) ---
-if config.IS_KAGGLE or config.IS_COLAB:
-    try:
-        from kaggle_gdrive_uploader import upload_training_results_to_gdrive
-        HAS_GDRIVE_UPLOADER = True
-    except ImportError:
-        HAS_GDRIVE_UPLOADER = False
-else:
+# --- Google Drive Uploader Integration ---
+try:
+    from kaggle_gdrive_uploader import upload_training_results_to_gdrive
+    HAS_GDRIVE_UPLOADER = True
+except ImportError:
     HAS_GDRIVE_UPLOADER = False
 
 #import gym
@@ -173,8 +170,9 @@ def trigger_cloud_backup(is_periodic=True):
     Create result archives and upload to Google Drive.
     Can be called periodically or at the end of training.
     """
-    if not (config.IS_KAGGLE or config.IS_COLAB):
-        return
+    # Remove specific environment guard to support local upload
+    # if not (config.IS_KAGGLE or config.IS_COLAB):
+    #     return
         
     # Respect the global backup flag (e.g. for Optuna tuning where we want speed)
     if not config.GDRIVE_BACKUP_ENABLED:
@@ -184,8 +182,14 @@ def trigger_cloud_backup(is_periodic=True):
     import subprocess
     from datetime import datetime
     
-    env_name_str = "Kaggle" if config.IS_KAGGLE else "Colab"
-    working_dir = config.LOG_SUMMARY_ROOT # /kaggle/working or /content
+    if config.IS_KAGGLE:
+        env_name_str = "Kaggle"
+    elif config.IS_COLAB:
+        env_name_str = "Colab"
+    else:
+        env_name_str = "Local"
+    
+    working_dir = config.LOG_SUMMARY_ROOT # /kaggle/working or /content or project root
     
     logger.info('')
     logger.warning('='*60)
