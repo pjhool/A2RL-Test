@@ -116,7 +116,7 @@ MIN_IMAGE_DIMENSION = 50
 # --- Aspect Ratio Validation ---
 MIN_ASPECT_RATIO = 0.5
 MAX_ASPECT_RATIO = 2.0
-ASPECT_RATIO_PENALTY = 5.0
+ASPECT_RATIO_PENALTY = 1.0
 
 # --- Network Architecture ---
 STATE_SIZE = (1, 2000)

@@ -2574,6 +2574,10 @@ class Agent(threading.Thread):
         if np.random.rand() < 0.1: # Log 10% of updates to avoid spam
             logger.info("  [Diagnose Thread %d] Rewards Mean=%.4f, Max=%.4f, Min=%.4f", self.thread_id, np.mean(self.rewards), np.max(self.rewards), np.min(self.rewards))
             logger.info("  [Diagnose Thread %d] Values Mean=%.4f, Target Mean=%.4f", self.thread_id, np.mean(values), np.mean(discounted_prediction))
+            # Check for large negative rewards indicating penalties
+            if np.min(self.rewards) <= -4.0:
+                logger.info("  [Diagnose Thread %d] ⚠️ DETECTED HIGH PENALTY! Min Reward: %.4f (Possible Aspect Ratio Violation)", self.thread_id, np.min(self.rewards))
+            
             logger.info("  [Diagnose Thread %d] Adv Raw Mean=%.4f, Std=%.4f, Range=[%.4f, %.4f]", 
                         self.thread_id, np.mean(advantages), np.std(advantages), np.min(advantages), np.max(advantages))
 
