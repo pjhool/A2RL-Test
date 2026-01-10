@@ -58,7 +58,7 @@ ALEXNET_NPY = os.path.join(DRIVE_ROOT, 'alexnet.npy')
 
 # --- A3C Hyperparameters ---
 ACTOR_LR = float(os.environ.get('A2RL_ACTOR_LR', '1.0e-5'))
-CRITIC_LR = float(os.environ.get('A2RL_CRITIC_LR', '2.0e-5'))
+CRITIC_LR = float(os.environ.get('A2RL_CRITIC_LR', '1.0e-5'))
 DISCOUNT_FACTOR = 0.99
 #BETA = 0.1
 BETA = float(os.environ.get('A2RL_BETA', '0.05'))
@@ -70,7 +70,7 @@ GRAD_CLIP_NORM = float(os.environ.get('A2RL_GRAD_CLIP_NORM', '10.0'))  # Stable 
 GRAD_CLIP_DEBUG = bool(int(os.environ.get('A2RL_GRAD_CLIP_DEBUG', '0')))
 
 # Environment variable support for runtime configuration
-THREADS = int(os.environ.get('A2RL_THREADS', '2'))  # Reduced to 2 for maximum stability during recovery
+THREADS = int(os.environ.get('A2RL_THREADS', '4'))  # Reduced to 2 for maximum stability during recovery
 #THREADS = int(os.environ.get('A2RL_THREADS', '4'))
 # --- RL Agent Parameters ---
 T_MAX = int(os.environ.get('A2RL_T_MAX', '50'))          # Maximum steps per episode
