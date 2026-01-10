@@ -79,7 +79,7 @@ STEP_PENALTY = float(os.environ.get('A2RL_STEP_PENALTY', '0.005'))
 MIN_STEPS = int(os.environ.get('A2RL_MIN_STEPS', '10'))      # Encourage at least 10 steps before STOP (reverted from 4)
 STOP_REWARD = float(os.environ.get('A2RL_STOP_REWARD', '-1.0')) # Penalty for early STOP
 
-REWARD_SCALE = float(os.environ.get('A2RL_REWARD_SCALE', '5.0'))
+REWARD_SCALE = float(os.environ.get('A2RL_REWARD_SCALE', '1.0'))
 REWARD_CLIP_MIN = float(os.environ.get('A2RL_REWARD_CLIP_MIN', '-1.0'))
 REWARD_CLIP_MAX = float(os.environ.get('A2RL_REWARD_CLIP_MAX', '1.0'))
 

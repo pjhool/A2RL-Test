@@ -2569,6 +2569,16 @@ class Agent(threading.Thread):
         values = np.array(values)
 
         advantages = discounted_prediction - values
+        
+        # Advantage Normalization: Reduces gradient variance and stabilizes training
+        # This is a standard practice in A3C/PPO implementations
+        adv_mean = np.mean(advantages)
+        adv_std = np.std(advantages)
+        if adv_std > 1e-8:
+            advantages = (advantages - adv_mean) / adv_std
+        else:
+            advantages = advantages - adv_mean  # Just center if std is too small
+        logger.debug('Advantage Normalization: mean=%.4f, std=%.4f', adv_mean, adv_std)
 
         # BATCH TRAINING for MLP
         if not config.USE_LSTM:
