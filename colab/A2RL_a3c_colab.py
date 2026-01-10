@@ -1984,7 +1984,7 @@ class Agent(threading.Thread):
    
                 reward_continuous = score_diff * REWARD_SCALE
                 reward_clipped = np.clip(reward_continuous, REWARD_CLIP_MIN, REWARD_CLIP_MAX)
-                reward = reward_clipped - self.step_penalty
+                reward = reward_clipped - self.step_penalty*self.t
 
                 
                 # Check Aspect Ratio with validation
