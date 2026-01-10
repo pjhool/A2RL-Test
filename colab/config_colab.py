@@ -61,7 +61,7 @@ ACTOR_LR = float(os.environ.get('A2RL_ACTOR_LR', '1.0e-5'))
 CRITIC_LR = float(os.environ.get('A2RL_CRITIC_LR', '1.0e-5'))
 DISCOUNT_FACTOR = 0.99
 #BETA = 0.1
-BETA = float(os.environ.get('A2RL_BETA', '0.05'))
+BETA = float(os.environ.get('A2RL_BETA', '0.01'))
 CURRICULUM_LEARNING = bool(int(os.environ.get('A2RL_CURRICULUM', '0'))) # 1=True, Sort by score low to high
 LOAD_WEIGHTS = os.environ.get('A2RL_LOAD_WEIGHTS')
 DOWNLOAD_WEIGHTS = os.environ.get('A2RL_DOWNLOAD_WEIGHTS') # GDrive folder name to download weights from (e.g. 'save_model')

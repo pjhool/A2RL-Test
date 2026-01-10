@@ -2570,15 +2570,25 @@ class Agent(threading.Thread):
 
         advantages = discounted_prediction - values
         
+        # Diagnostic Logging for Divergence Analysis
+        if np.random.rand() < 0.1: # Log 10% of updates to avoid spam
+            logger.info("  [Diagnose Thread %d] Rewards Mean=%.4f, Max=%.4f, Min=%.4f", self.thread_id, np.mean(self.rewards), np.max(self.rewards), np.min(self.rewards))
+            logger.info("  [Diagnose Thread %d] Values Mean=%.4f, Target Mean=%.4f", self.thread_id, np.mean(values), np.mean(discounted_prediction))
+            logger.info("  [Diagnose Thread %d] Adv Raw Mean=%.4f, Std=%.4f, Range=[%.4f, %.4f]", 
+                        self.thread_id, np.mean(advantages), np.std(advantages), np.min(advantages), np.max(advantages))
+
         # Advantage Normalization: Reduces gradient variance and stabilizes training
-        # This is a standard practice in A3C/PPO implementations
+        # Standard A3C/PPO practice
         adv_mean = np.mean(advantages)
         adv_std = np.std(advantages)
-        if adv_std > 1e-8:
-            advantages = (advantages - adv_mean) / adv_std
+        if adv_std > 1e-4: # Only normalize if there is meaningful variance
+            advantages = (advantages - adv_mean) / (adv_std + 1e-8)
+            logger.debug('Advantage Normalization applied: mean=%.4f, std=%.4f', adv_mean, adv_std)
         else:
-            advantages = advantages - adv_mean  # Just center if std is too small
-        logger.debug('Advantage Normalization: mean=%.4f, std=%.4f', adv_mean, adv_std)
+            # If all steps are similarly bad/good, centering around zero might wash out the signal.
+            # We keep the raw advantages (centered only) so the negative/positive sign is preserved.
+            advantages = advantages - adv_mean
+            logger.debug('Advantage Normalization skipped (low variance): mean=%.4f, std=%.4f', adv_mean, adv_std)
 
         # BATCH TRAINING for MLP
         if not config.USE_LSTM:
