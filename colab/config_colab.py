@@ -130,7 +130,7 @@ USE_LSTM = bool(int(os.environ.get('A2RL_USE_LSTM', '0')))  # 0=False(MLP), 1=Tr
 USE_LAYER_NORM = bool(int(os.environ.get('A2RL_USE_LAYER_NORM', '1')))  # 0=False (default), 1=True
 
 # --- Feature Scaling Settings ---
-ENABLE_FEATURE_SCALING = True
+ENABLE_FEATURE_SCALING = False
 FEATURE_SCALING_METHOD = 'standardization'
 FEATURE_STATS_PATH = DRIVE_ROOT + '/feature_stats.json'
 FEATURE_EPSILON = 1e-8
