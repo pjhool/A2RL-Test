@@ -1402,7 +1402,13 @@ class A3CAgent:
 
         # [반환값 - 가치]의 제곱을 오류함수로 함
         # Flip order for Keras 3 compatibility (KerasTensor - Placeholder)
-        loss = K.mean(K.square(value - discounted_prediction))
+        # [반환값 - 가치]의 제곱을 오류함수로 함 (MSE) -> Huber Loss로 변경하여 이상치에 강건하게 함
+        # Huber Loss: 0.5 * x^2 if |x| < 1 else |x| - 0.5
+        error = value - discounted_prediction
+        cond = K.abs(error) < 1.0
+        squared_loss = 0.5 * K.square(error)
+        linear_loss = K.abs(error) - 0.5
+        loss = K.mean(tf.where(cond, squared_loss, linear_loss))
 
         # Use dynamic learning rate argument name for compatibility
         opt_kwargs = {'rho': 0.99, 'epsilon': 0.01}
