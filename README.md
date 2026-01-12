@@ -17,7 +17,7 @@ Debang Li, Huikai Wu, Junge Zhang, Kaiqi Huang
 
 Given a source image, our algorithm could take actions step by step to find almost the best cropping window on source image. 
 
-Contact: Hui-Kai Wu (huikaiwu@icloud.com)
+Contact: JungHwan Park ( pjhool@naver.com)
 
 ## Getting started
 * Install the python libraries. (See `Requirements`).
