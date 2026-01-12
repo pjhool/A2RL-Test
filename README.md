@@ -23,8 +23,8 @@ Contact: Hui-Kai Wu (huikaiwu@icloud.com)
 * Install the python libraries. (See `Requirements`).
 * Download the code from GitHub:
 ```bash
-git clone https://github.com/wuhuikai/TF-A2RL.git
-cd TF-A2RL
+git clone https://github.com/pjhool/A2RL-Test.git
+cd A2RL-Test
 ```
 * Download the pretrained models `vfn_rl.pk` from [Google Drive](https://drive.google.com/file/d/181rGRJfUdEJl4LVD3Eqy8xeSFzVt6bJv/view?usp=sharing), then put them in current directory (`TF-A2RL/`).
 
